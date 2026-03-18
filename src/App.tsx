@@ -183,7 +183,7 @@ export default function App() {
 
   // Dashboard Data Effect
   useEffect(() => {
-    if (!user) return;
+    if (!user || !user.uid) return;
     const q = query(collection(db, 'properties'), where('inspectorId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setProperties(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Property)));
@@ -203,7 +203,7 @@ export default function App() {
 
   // Inspection Data Effect
   useEffect(() => {
-    if (!selectedProperty || !selectedProperty.id || !user) return;
+    if (!selectedProperty || !selectedProperty.id || !user || !user.uid) return;
     const q = query(
       collection(db, 'inspections'), 
       where('propertyId', '==', selectedProperty.id),
@@ -246,7 +246,7 @@ export default function App() {
   const handleLogout = () => signOut(auth);
 
   const createProperty = async (p: Partial<Property>) => {
-    if (!user) return;
+    if (!user || !user.uid) return;
     try {
       await addDoc(collection(db, 'properties'), {
         ...p,
@@ -258,7 +258,7 @@ export default function App() {
   };
 
   const createInspection = async (type: 'Entry' | 'Exit' | 'Periodic') => {
-    if (!selectedProperty || !user) return;
+    if (!selectedProperty || !user || !user.uid) return;
     try {
       const docRef = await addDoc(collection(db, 'inspections'), {
         propertyId: selectedProperty.id,
@@ -319,13 +319,15 @@ export default function App() {
   };
 
   const toggleFavorite = async (propertyId: string) => {
-    if (!user) return;
+    if (!user || !user.uid) return;
     const existing = favorites.find(f => f.propertyId === propertyId);
-    if (existing) {
-      await deleteDoc(doc(db, 'favorites', existing.id));
-    } else {
-      await addDoc(collection(db, 'favorites'), { userId: user.uid, propertyId, createdAt: serverTimestamp() });
-    }
+    try {
+      if (existing) {
+        await deleteDoc(doc(db, 'favorites', existing.id));
+      } else {
+        await addDoc(collection(db, 'favorites'), { userId: user.uid, propertyId, createdAt: serverTimestamp() });
+      }
+    } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'favorites'); }
   };
 
   const toggleComparison = (property: Property) => {
