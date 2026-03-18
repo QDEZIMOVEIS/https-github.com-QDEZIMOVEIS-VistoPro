@@ -13,11 +13,23 @@ import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite 
 import { handleFirestoreError } from './errorUtils';
 import { 
   Plus, LogOut, Home, ClipboardList, ChevronRight, CheckCircle2, 
-  Camera, Save, ArrowLeft, User, Settings, Heart, Scale, X, Info
+  Camera, Save, ArrowLeft, User, Settings, Heart, Scale, X, Info,
+  MessageSquare, Sparkles, Mic, Play, Loader2, Image as ImageIcon,
+  Video as VideoIcon, Wand2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import * as aiService from './geminiService';
+
+declare global {
+  interface Window {
+    aistudio: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -116,6 +128,32 @@ export default function App() {
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [comparisonList, setComparisonList] = useState<Property[]>([]);
 
+  // AI State
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  // Check API Key
+  useEffect(() => {
+    const checkKey = async () => {
+      if (window.aistudio) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(hasKey);
+      }
+    };
+    checkKey();
+  }, []);
+
+  const handleOpenSelectKey = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true);
+    }
+  };
+
   // Auth Effect
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -155,40 +193,47 @@ export default function App() {
 
   // Favorites Effect
   useEffect(() => {
-    if (!user) return;
+    if (!user || !user.uid) return;
     const q = query(collection(db, 'favorites'), where('userId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setFavorites(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Favorite)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'favorites'));
     return unsubscribe;
   }, [user]);
 
   // Inspection Data Effect
   useEffect(() => {
-    if (!selectedProperty) return;
-    const q = query(collection(db, 'inspections'), where('propertyId', '==', selectedProperty.id));
+    if (!selectedProperty || !selectedProperty.id || !user) return;
+    const q = query(
+      collection(db, 'inspections'), 
+      where('propertyId', '==', selectedProperty.id),
+      where('inspectorId', '==', user.uid)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setInspections(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Inspection)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'inspections'));
     return unsubscribe;
-  }, [selectedProperty]);
+  }, [selectedProperty, user]);
 
   // Rooms & Items Data Effect
   useEffect(() => {
-    if (!selectedInspection) return;
+    if (!selectedInspection || !selectedInspection.id) return;
     const roomsQ = query(collection(db, 'rooms'), where('inspectionId', '==', selectedInspection.id));
     const unsubRooms = onSnapshot(roomsQ, (snapshot) => {
       setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Room)).sort((a, b) => a.order - b.order));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'rooms'));
     return unsubRooms;
   }, [selectedInspection]);
 
   useEffect(() => {
     if (rooms.length === 0) return;
-    const itemsQ = query(collection(db, 'items'), where('roomId', 'in', rooms.map(r => r.id)));
+    const roomIds = rooms.map(r => r.id).filter(id => !!id);
+    if (roomIds.length === 0) return;
+    
+    const itemsQ = query(collection(db, 'items'), where('roomId', 'in', roomIds));
     const unsubItems = onSnapshot(itemsQ, (snapshot) => {
       setItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Item)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'items'));
     return unsubItems;
   }, [rooms]);
 
@@ -268,6 +313,46 @@ export default function App() {
       await updateDoc(doc(db, 'inspections', selectedInspection.id), { status: 'Completed' });
       setView('dashboard');
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'inspections'); }
+  };
+
+  // AI Handlers
+  const handleSendMessage = async () => {
+    if (!chatInput.trim()) return;
+    const userMsg = chatInput;
+    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setChatInput('');
+    setIsChatLoading(true);
+    try {
+      const response = await aiService.chatWithGemini(userMsg);
+      setChatMessages(prev => [...prev, { role: 'ai', text: response || 'Desculpe, não consegui processar sua solicitação.' }]);
+    } catch (err) {
+      console.error(err);
+      setChatMessages(prev => [...prev, { role: 'ai', text: 'Erro ao conectar com a IA.' }]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  const handleGeneratePropertyImage = async (address: string) => {
+    if (!hasApiKey) {
+      await handleOpenSelectKey();
+    }
+    setIsGeneratingImage(true);
+    try {
+      const prompt = `Uma foto profissional de alta qualidade de um imóvel localizado em: ${address}. Estilo arquitetônico moderno, iluminação natural, bem decorado.`;
+      const imageUrl = await aiService.generateImage(prompt);
+      if (imageUrl && selectedProperty) {
+        // In a real app, we'd upload this to storage, but for now we'll just show it
+        alert('Imagem gerada com sucesso! (Em um app real, ela seria salva no banco de dados)');
+        // Update property with generated image (mocking for now)
+        // await updateDoc(doc(db, 'properties', selectedProperty.id), { imageUrl });
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao gerar imagem.');
+    } finally {
+      setIsGeneratingImage(false);
+    }
   };
 
   // --- Views ---
@@ -418,7 +503,12 @@ export default function App() {
                   <Input label="Quartos" type="number" value={selectedProperty?.bedrooms || ''} onChange={(v) => setSelectedProperty(prev => ({ ...prev, bedrooms: Number(v) } as Property))} />
                   <Input label="Banheiros" type="number" value={selectedProperty?.bathrooms || ''} onChange={(v) => setSelectedProperty(prev => ({ ...prev, bathrooms: Number(v) } as Property))} />
                 </div>
-                <Button className="w-full py-4 text-lg" onClick={() => createProperty(selectedProperty || {})} disabled={!selectedProperty?.address}>Salvar Imóvel</Button>
+                <div className="pt-4 flex gap-4">
+                  <Button className="flex-1 py-4 text-lg" onClick={() => createProperty(selectedProperty || {})} disabled={!selectedProperty?.address}>Salvar Imóvel</Button>
+                  <Button variant="secondary" className="px-6" onClick={() => handleGeneratePropertyImage(selectedProperty?.address || '')} disabled={!selectedProperty?.address || isGeneratingImage} icon={isGeneratingImage ? Loader2 : Sparkles}>
+                    {isGeneratingImage ? 'Gerando...' : 'IA: Gerar Foto'}
+                  </Button>
+                </div>
               </Card>
             </motion.div>
           )}
@@ -496,7 +586,34 @@ export default function App() {
                               </div>
                             </div>
                             <textarea placeholder="Notas sobre o estado..." value={item.notes} onChange={(e) => updateItemNotes(item.id, e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/10" rows={2} />
-                            <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-lg hover:bg-indigo-100 transition-colors"><Camera size={14} /> Adicionar Fotos</button>
+                            <div className="flex gap-2">
+                              <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-lg hover:bg-indigo-100 transition-colors"><Camera size={14} /> Adicionar Fotos</button>
+                              <button 
+                                onClick={async () => {
+                                  // Mocking audio transcription for now as real audio capture in iframe is tricky
+                                  // In a real app, we'd use MediaRecorder
+                                  const mockAudioBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="; // Empty wav
+                                  const transcription = await aiService.transcribeAudio(mockAudioBase64);
+                                  updateItemNotes(item.id, (item.notes ? item.notes + ' ' : '') + transcription);
+                                }}
+                                className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg hover:bg-emerald-100 transition-colors"
+                              >
+                                <Mic size={14} /> IA: Transcrever
+                              </button>
+                              <button 
+                                onClick={async () => {
+                                  if (!item.notes) return;
+                                  const audioData = await aiService.textToSpeech(item.notes);
+                                  if (audioData) {
+                                    const audio = new Audio(`data:audio/wav;base64,${audioData}`);
+                                    audio.play();
+                                  }
+                                }}
+                                className="flex items-center gap-2 text-xs font-bold text-amber-600 bg-amber-50 px-3 py-2 rounded-lg hover:bg-amber-100 transition-colors"
+                              >
+                                <Play size={14} /> IA: Ouvir Notas
+                              </button>
+                            </div>
                           </Card>
                         ))}
                       </div>
@@ -508,6 +625,82 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* AI Chat Button */}
+      <button 
+        onClick={() => setIsChatOpen(true)}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all z-50"
+      >
+        <MessageSquare size={24} />
+      </button>
+
+      {/* AI Chat Modal */}
+      <AnimatePresence>
+        {isChatOpen && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            className="fixed bottom-24 right-6 w-full max-w-sm h-[500px] bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden flex flex-col z-50"
+          >
+            <div className="p-4 bg-indigo-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles size={18} />
+                <span className="font-bold">VistoPro AI</span>
+              </div>
+              <button onClick={() => setIsChatOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition-colors"><X size={18} /></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+              {chatMessages.length === 0 && (
+                <div className="text-center py-10 space-y-2">
+                  <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Info size={24} />
+                  </div>
+                  <p className="text-sm font-bold text-gray-900">Como posso ajudar?</p>
+                  <p className="text-xs text-gray-500 px-8">Pergunte sobre vistorias, normas técnicas ou como usar o VistoPro.</p>
+                </div>
+              )}
+              {chatMessages.map((msg, idx) => (
+                <div key={idx} className={cn("flex", msg.role === 'user' ? "justify-end" : "justify-start")}>
+                  <div className={cn(
+                    "max-w-[85%] p-3 rounded-2xl text-sm",
+                    msg.role === 'user' ? "bg-indigo-600 text-white rounded-tr-none" : "bg-gray-100 text-gray-800 rounded-tl-none"
+                  )}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {isChatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 p-3 rounded-2xl rounded-tl-none flex gap-1">
+                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <input 
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                placeholder="Digite sua mensagem..."
+                className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              />
+              <button 
+                onClick={handleSendMessage}
+                disabled={!chatInput.trim() || isChatLoading}
+                className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
