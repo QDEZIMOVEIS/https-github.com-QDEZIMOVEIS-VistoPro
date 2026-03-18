@@ -35,11 +35,20 @@ export interface Inspection {
   inspectorId: string;
 }
 
+export interface Media {
+  id: string;
+  type: 'photo' | 'video';
+  url: string;
+  createdAt: any;
+}
+
 export interface Room {
   id: string;
   inspectionId: string;
   name: string;
   order: number;
+  notes: string;
+  media: Media[];
 }
 
 export interface Item {

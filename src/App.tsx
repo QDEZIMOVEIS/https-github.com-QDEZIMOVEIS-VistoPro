@@ -269,15 +269,53 @@ export default function App() {
       });
       const defaultRooms = ['Sala', 'Cozinha', 'Banheiro', 'Quarto'];
       for (let i = 0; i < defaultRooms.length; i++) {
-        const roomRef = await addDoc(collection(db, 'rooms'), { inspectionId: docRef.id, name: defaultRooms[i], order: i });
-        const defaultItems = ['Paredes', 'Piso', 'Teto', 'Janelas', 'Porta'];
-        for (const itemName of defaultItems) {
-          await addDoc(collection(db, 'items'), { roomId: roomRef.id, name: itemName, status: 'Good', notes: '', photos: [] });
-        }
+        await addDoc(collection(db, 'rooms'), { 
+          inspectionId: docRef.id, 
+          name: defaultRooms[i], 
+          order: i,
+          notes: '',
+          media: []
+        });
       }
       setSelectedInspection({ id: docRef.id, propertyId: selectedProperty.id, type, status: 'Draft', date: new Date(), inspectorId: user.uid } as Inspection);
       setView('inspection-view');
     } catch (err) { handleFirestoreError(err, OperationType.CREATE, 'inspections'); }
+  };
+
+  const deleteInspection = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir esta vistoria?')) return;
+    try {
+      await deleteDoc(doc(db, 'inspections', id));
+      // In a real app, we'd also delete rooms and items, but for now we'll just delete the inspection
+    } catch (err) { handleFirestoreError(err, OperationType.DELETE, 'inspections'); }
+  };
+
+  const addRoom = async () => {
+    if (!selectedInspection) return;
+    const name = window.prompt('Nome do Cômodo:');
+    if (!name) return;
+    try {
+      await addDoc(collection(db, 'rooms'), {
+        inspectionId: selectedInspection.id,
+        name,
+        order: rooms.length,
+        notes: '',
+        media: []
+      });
+    } catch (err) { handleFirestoreError(err, OperationType.CREATE, 'rooms'); }
+  };
+
+  const deleteRoom = async (roomId: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este cômodo?')) return;
+    try {
+      await deleteDoc(doc(db, 'rooms', roomId));
+    } catch (err) { handleFirestoreError(err, OperationType.DELETE, 'rooms'); }
+  };
+
+  const updateRoomNotes = async (roomId: string, notes: string) => {
+    try {
+      await updateDoc(doc(db, 'rooms', roomId), { notes });
+    } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'rooms'); }
   };
 
   const toggleFavorite = async (propertyId: string) => {
@@ -465,7 +503,7 @@ export default function App() {
                   </div>
                   <div className="space-y-3">
                     {inspections.map(ins => (
-                      <Card key={ins.id} onClick={() => { setSelectedInspection(ins); setView('inspection-view'); }} className="p-4 flex items-center justify-between hover:bg-gray-50">
+                      <Card key={ins.id} onClick={() => { setSelectedInspection(ins); setView('inspection-view'); }} className="p-4 flex items-center justify-between hover:bg-gray-50 group">
                         <div className="flex items-center gap-4">
                           <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", ins.type === 'Entry' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600")}><ClipboardList size={20} /></div>
                           <div>
@@ -475,6 +513,12 @@ export default function App() {
                         </div>
                         <div className="flex items-center gap-4">
                           <Badge variant={ins.status === 'Completed' ? 'success' : 'warning'}>{ins.status === 'Completed' ? 'Concluída' : 'Rascunho'}</Badge>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); deleteInspection(ins.id); }}
+                            className="p-2 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                          >
+                            <X size={18} />
+                          </button>
                           <ChevronRight size={18} className="text-gray-300" />
                         </div>
                       </Card>
@@ -561,11 +605,18 @@ export default function App() {
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                 <div className="lg:col-span-1 space-y-4">
-                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest px-2">Cômodos</h3>
+                  <div className="flex items-center justify-between px-2">
+                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Cômodos</h3>
+                    <button onClick={addRoom} className="p-1 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><Plus size={18} /></button>
+                  </div>
                   <div className="space-y-1">
                     {rooms.map(room => (
-                      <button key={room.id} className="w-full text-left px-4 py-3 rounded-xl transition-all font-medium flex items-center justify-between hover:bg-indigo-50 hover:text-indigo-600">
-                        {room.name} <ChevronRight size={14} />
+                      <button key={room.id} className="w-full text-left px-4 py-3 rounded-xl transition-all font-medium flex items-center justify-between hover:bg-indigo-50 hover:text-indigo-600 group">
+                        {room.name} 
+                        <div className="flex items-center gap-2">
+                          <X size={14} onClick={(e) => { e.stopPropagation(); deleteRoom(room.id); }} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all" />
+                          <ChevronRight size={14} />
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -573,52 +624,74 @@ export default function App() {
                 <div className="lg:col-span-3 space-y-8">
                   {rooms.map(room => (
                     <div key={room.id} className="space-y-4">
-                      <div className="flex items-center gap-2 px-2"><div className="w-2 h-6 bg-indigo-600 rounded-full"></div><h3 className="text-xl font-bold">{room.name}</h3></div>
-                      <div className="space-y-4">
-                        {items.filter(i => i.roomId === room.id).map(item => (
-                          <Card key={item.id} className="p-6 space-y-4">
-                            <div className="flex items-center justify-between">
-                              <h4 className="font-bold text-lg">{item.name}</h4>
-                              <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
-                                {(['Good', 'Regular', 'Bad', 'N/A'] as Item['status'][]).map(s => (
-                                  <button key={s} onClick={() => updateItemStatus(item.id, s)} className={cn("px-3 py-1.5 rounded-lg text-xs font-bold transition-all", item.status === s ? "bg-white shadow-sm text-indigo-600" : "text-gray-400 hover:text-gray-600")}>{s}</button>
-                                ))}
-                              </div>
-                            </div>
-                            <textarea placeholder="Notas sobre o estado..." value={item.notes} onChange={(e) => updateItemNotes(item.id, e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/10" rows={2} />
-                            <div className="flex gap-2">
-                              <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-2 rounded-lg hover:bg-indigo-100 transition-colors"><Camera size={14} /> Adicionar Fotos</button>
-                              <button 
-                                onClick={async () => {
-                                  // Mocking audio transcription for now as real audio capture in iframe is tricky
-                                  // In a real app, we'd use MediaRecorder
-                                  const mockAudioBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="; // Empty wav
-                                  const transcription = await aiService.transcribeAudio(mockAudioBase64);
-                                  updateItemNotes(item.id, (item.notes ? item.notes + ' ' : '') + transcription);
-                                }}
-                                className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg hover:bg-emerald-100 transition-colors"
-                              >
-                                <Mic size={14} /> IA: Transcrever
-                              </button>
-                              <button 
-                                onClick={async () => {
-                                  if (!item.notes) return;
-                                  const audioData = await aiService.textToSpeech(item.notes);
-                                  if (audioData) {
-                                    const audio = new Audio(`data:audio/wav;base64,${audioData}`);
-                                    audio.play();
-                                  }
-                                }}
-                                className="flex items-center gap-2 text-xs font-bold text-amber-600 bg-amber-50 px-3 py-2 rounded-lg hover:bg-amber-100 transition-colors"
-                              >
-                                <Play size={14} /> IA: Ouvir Notas
-                              </button>
-                            </div>
-                          </Card>
-                        ))}
+                      <div className="flex items-center justify-between px-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-6 bg-indigo-600 rounded-full"></div>
+                          <h3 className="text-xl font-bold">{room.name}</h3>
+                        </div>
+                        <button onClick={() => deleteRoom(room.id)} className="text-xs text-red-500 font-bold hover:underline">Remover Cômodo</button>
                       </div>
+                      <Card className="p-6 space-y-6">
+                        <div className="space-y-2">
+                          <label className="text-sm font-bold text-gray-700">Observações e Vistoria</label>
+                          <textarea 
+                            placeholder="Descreva o estado do cômodo, detalhes importantes, etc..." 
+                            value={room.notes || ''} 
+                            onChange={(e) => updateRoomNotes(room.id, e.target.value)} 
+                            className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/10 min-h-[120px]" 
+                          />
+                        </div>
+                        
+                        <div className="flex flex-wrap gap-3">
+                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                            <Camera size={16} /> Adicionar Foto
+                          </button>
+                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                            <VideoIcon size={16} /> Adicionar Vídeo
+                          </button>
+                          <button 
+                            onClick={async () => {
+                              const mockAudioBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+                              const transcription = await aiService.transcribeAudio(mockAudioBase64);
+                              updateRoomNotes(room.id, (room.notes ? room.notes + ' ' : '') + transcription);
+                            }}
+                            className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-4 py-2.5 rounded-xl hover:bg-emerald-100 transition-colors"
+                          >
+                            <Mic size={16} /> IA: Transcrever Áudio
+                          </button>
+                          <button 
+                            onClick={async () => {
+                              if (!room.notes) return;
+                              const audioData = await aiService.textToSpeech(room.notes);
+                              if (audioData) {
+                                const audio = new Audio(`data:audio/wav;base64,${audioData}`);
+                                audio.play();
+                              }
+                            }}
+                            className="flex items-center gap-2 text-xs font-bold text-amber-600 bg-amber-50 px-4 py-2.5 rounded-xl hover:bg-amber-100 transition-colors"
+                          >
+                            <Play size={16} /> IA: Ouvir Notas
+                          </button>
+                        </div>
+
+                        {/* Media Preview Placeholder */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-50">
+                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
+                            <ImageIcon size={24} />
+                          </div>
+                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
+                            <VideoIcon size={24} />
+                          </div>
+                        </div>
+                      </Card>
                     </div>
                   ))}
+                  
+                  <div className="pt-4">
+                    <Button variant="secondary" className="w-full py-4 border-dashed border-2" onClick={addRoom} icon={Plus}>
+                      Adicionar Novo Cômodo
+                    </Button>
+                  </div>
                 </div>
               </div>
             </motion.div>
