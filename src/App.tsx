@@ -9,20 +9,18 @@ import {
   collection, doc, setDoc, getDoc, query, where, onSnapshot, 
   addDoc, updateDoc, deleteDoc, serverTimestamp, FirebaseUser 
 } from './firebase';
-import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite, Media } from './types';
+import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite } from './types';
 import { handleFirestoreError } from './errorUtils';
 import { 
-  Plus, LogOut, Home, ClipboardList, ChevronRight, ChevronLeft, CheckCircle2, 
+  Plus, LogOut, Home, ClipboardList, ChevronRight, CheckCircle2, 
   Camera, Save, ArrowLeft, User, Settings, Heart, Scale, X, Info,
   MessageSquare, Sparkles, Mic, Play, Loader2, Image as ImageIcon,
-  Video as VideoIcon, Wand2, Printer
+  Video as VideoIcon, Wand2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import * as aiService from './geminiService';
-
-import ReactMarkdown from 'react-markdown';
 
 declare global {
   interface Window {
@@ -114,96 +112,11 @@ const Badge = ({ children, variant = 'neutral' }: { children: React.ReactNode, v
 
 // --- Main App ---
 
-const MediaCarousel = ({ media, className }: { media: Media[], className?: string }) => {
-  const [currentIndex, setCurrentIndex] = useState(0);
-
-  if (media.length === 0) return null;
-
-  const next = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentIndex((prev) => (prev + 1) % media.length);
-  };
-  const prev = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentIndex((prev) => (prev - 1 + media.length) % media.length);
-  };
-
-  const current = media[currentIndex];
-
-  return (
-    <div className={cn("relative group", className)}>
-      <div className="aspect-video bg-gray-900 rounded-2xl overflow-hidden relative shadow-lg border border-gray-800">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={current.id}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.3, ease: 'easeInOut' }}
-            className="w-full h-full flex items-center justify-center"
-          >
-            {current.type === 'photo' ? (
-              <img src={current.url} alt="Mídia" className="w-full h-full object-contain" />
-            ) : (
-              <video src={current.url} controls className="w-full h-full object-contain" />
-            )}
-          </motion.div>
-        </AnimatePresence>
-
-        {media.length > 1 && (
-          <>
-            <button
-              onClick={prev}
-              className="absolute left-4 top-1/2 -translate-y-1/2 p-2.5 bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all z-10"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <button
-              onClick={next}
-              className="absolute right-4 top-1/2 -translate-y-1/2 p-2.5 bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all z-10"
-            >
-              <ChevronRight size={20} />
-            </button>
-          </>
-        )}
-
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
-          {media.map((_, i) => (
-            <button
-              key={i}
-              onClick={(e) => { e.stopPropagation(); setCurrentIndex(i); }}
-              className={cn(
-                "w-1.5 h-1.5 rounded-full transition-all",
-                i === currentIndex ? "bg-white w-4" : "bg-white/40 hover:bg-white/60"
-              )}
-            />
-          ))}
-        </div>
-        
-        <div className="absolute top-4 right-4 px-2 py-1 bg-black/40 backdrop-blur-sm rounded-lg text-[10px] font-bold text-white uppercase tracking-widest z-10">
-          {currentIndex + 1} / {media.length}
-        </div>
-      </div>
-
-      {current.aiAnalysis && (
-        <div className="mt-4 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100/50">
-          <h5 className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1 flex items-center gap-1">
-            <Sparkles size={10} /> Análise da Mídia Selecionada
-          </h5>
-          <div className="text-xs text-indigo-900 leading-relaxed italic prose prose-sm max-w-none">
-            <ReactMarkdown>{current.aiAnalysis}</ReactMarkdown>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'dashboard' | 'property-form' | 'inspection-view' | 'inspection-report' | 'comparison' | 'comparison-pdf'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'property-form' | 'inspection-view' | 'comparison'>('dashboard');
   
   // Data State
   const [properties, setProperties] = useState<Property[]>([]);
@@ -211,7 +124,6 @@ export default function App() {
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [selectedInspection, setSelectedInspection] = useState<Inspection | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [media, setMedia] = useState<Media[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [comparisonList, setComparisonList] = useState<Property[]>([]);
@@ -221,12 +133,6 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [isComparingPDFs, setIsComparingPDFs] = useState(false);
-  const [pdfReport, setPdfReport] = useState<string | null>(null);
-  const [entryPdf, setEntryPdf] = useState<{ name: string, base64: string } | null>(null);
-  const [exitPdf, setExitPdf] = useState<{ name: string, base64: string } | null>(null);
-  const [isAnalyzingMedia, setIsAnalyzingMedia] = useState<string | null>(null); // mediaId or roomId
-  const [isAnalyzingRoom, setIsAnalyzingRoom] = useState<string | null>(null); // roomId
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
 
@@ -277,7 +183,7 @@ export default function App() {
 
   // Dashboard Data Effect
   useEffect(() => {
-    if (!user || !user.uid) return;
+    if (!user) return;
     const q = query(collection(db, 'properties'), where('inspectorId', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setProperties(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Property)));
@@ -297,7 +203,7 @@ export default function App() {
 
   // Inspection Data Effect
   useEffect(() => {
-    if (!selectedProperty || !selectedProperty.id || !user || !user.uid) return;
+    if (!selectedProperty || !selectedProperty.id || !user) return;
     const q = query(
       collection(db, 'inspections'), 
       where('propertyId', '==', selectedProperty.id),
@@ -319,25 +225,6 @@ export default function App() {
     return unsubRooms;
   }, [selectedInspection]);
 
-  // Media Data Effect
-  useEffect(() => {
-    if (rooms.length === 0) {
-      setMedia([]);
-      return;
-    }
-    const roomIds = rooms.map(r => r.id).filter(id => !!id);
-    if (roomIds.length === 0) {
-      setMedia([]);
-      return;
-    }
-
-    const mediaQ = query(collection(db, 'media'), where('roomId', 'in', roomIds));
-    const unsubMedia = onSnapshot(mediaQ, (snapshot) => {
-      setMedia(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Media)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'media'));
-    return unsubMedia;
-  }, [rooms]);
-
   useEffect(() => {
     if (rooms.length === 0) return;
     const roomIds = rooms.map(r => r.id).filter(id => !!id);
@@ -356,121 +243,10 @@ export default function App() {
     try { await signInWithPopup(auth, googleProvider); } catch (err) { console.error(err); }
   };
 
-  const handleMediaUpload = async (roomId: string, type: 'photo' | 'video', files: FileList) => {
-    const fileArray = Array.from(files);
-    
-    const uploadPromises = fileArray.map(file => {
-      return new Promise<void>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-          const base64 = (e.target?.result as string).split(',')[1];
-          const url = e.target?.result as string;
-          
-          try {
-            await addDoc(collection(db, 'media'), {
-              roomId,
-              type,
-              url,
-              createdAt: serverTimestamp()
-            });
-          } catch (err) {
-            handleFirestoreError(err, OperationType.CREATE, 'media');
-          }
-          resolve();
-        };
-        reader.readAsDataURL(file);
-      });
-    });
-
-    await Promise.all(uploadPromises);
-  };
-
-  const deleteMedia = async (mediaId: string) => {
-    try {
-      await deleteDoc(doc(db, 'media', mediaId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, 'media');
-    }
-  };
-
-  const analyzeRoom = async (roomId: string) => {
-    const roomMedia = media.filter(m => m.roomId === roomId);
-    if (roomMedia.length === 0) return;
-
-    setIsAnalyzingRoom(roomId);
-    try {
-      const mediaItems = roomMedia.filter(m => !!m.base64 || !!m.url).map(m => {
-        // Extract base64 from url if base64 is missing
-        let b64 = m.base64;
-        if (!b64 && m.url.startsWith('data:')) {
-          b64 = m.url.split(',')[1];
-        }
-        return {
-          base64: b64 || '',
-          type: m.type
-        };
-      }).filter(m => !!m.base64);
-
-      if (mediaItems.length === 0) return;
-
-      const analysis = await aiService.analyzeRoomMedia(mediaItems);
-      await updateDoc(doc(db, 'rooms', roomId), { aiAnalysis: analysis });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsAnalyzingRoom(null);
-    }
-  };
-
-  const analyzeMedia = async (mediaId: string) => {
-    const m = media.find(item => item.id === mediaId);
-    if (!m) return;
-
-    let b64 = m.base64;
-    if (!b64 && m.url.startsWith('data:')) {
-      b64 = m.url.split(',')[1];
-    }
-    if (!b64) return;
-
-    setIsAnalyzingMedia(mediaId);
-    try {
-      const mimeType = m.type === 'photo' ? 'image/jpeg' : 'video/mp4';
-      const analysis = await aiService.analyzeInspectionMedia(b64, mimeType);
-      await updateDoc(doc(db, 'media', mediaId), { aiAnalysis: analysis });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsAnalyzingMedia(null);
-    }
-  };
-
-  const handlePDFUpload = (file: File, type: 'entry' | 'exit') => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const base64 = (e.target?.result as string).split(',')[1];
-      if (type === 'entry') setEntryPdf({ name: file.name, base64 });
-      else setExitPdf({ name: file.name, base64 });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const runPDFComparison = async () => {
-    if (!entryPdf || !exitPdf) return;
-    setIsComparingPDFs(true);
-    try {
-      const report = await aiService.comparePDFs(entryPdf.base64, exitPdf.base64);
-      setPdfReport(report);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsComparingPDFs(false);
-    }
-  };
-
   const handleLogout = () => signOut(auth);
 
   const createProperty = async (p: Partial<Property>) => {
-    if (!user || !user.uid) return;
+    if (!user) return;
     try {
       await addDoc(collection(db, 'properties'), {
         ...p,
@@ -482,7 +258,7 @@ export default function App() {
   };
 
   const createInspection = async (type: 'Entry' | 'Exit' | 'Periodic') => {
-    if (!selectedProperty || !user || !user.uid) return;
+    if (!selectedProperty || !user) return;
     try {
       const docRef = await addDoc(collection(db, 'inspections'), {
         propertyId: selectedProperty.id,
@@ -543,15 +319,13 @@ export default function App() {
   };
 
   const toggleFavorite = async (propertyId: string) => {
-    if (!user || !user.uid) return;
+    if (!user) return;
     const existing = favorites.find(f => f.propertyId === propertyId);
-    try {
-      if (existing) {
-        await deleteDoc(doc(db, 'favorites', existing.id));
-      } else {
-        await addDoc(collection(db, 'favorites'), { userId: user.uid, propertyId, createdAt: serverTimestamp() });
-      }
-    } catch (err) { handleFirestoreError(err, OperationType.WRITE, 'favorites'); }
+    if (existing) {
+      await deleteDoc(doc(db, 'favorites', existing.id));
+    } else {
+      await addDoc(collection(db, 'favorites'), { userId: user.uid, propertyId, createdAt: serverTimestamp() });
+    }
   };
 
   const toggleComparison = (property: Property) => {
@@ -575,7 +349,7 @@ export default function App() {
     if (!selectedInspection) return;
     try {
       await updateDoc(doc(db, 'inspections', selectedInspection.id), { status: 'Completed' });
-      setView('inspection-report');
+      setView('dashboard');
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'inspections'); }
   };
 
@@ -677,13 +451,12 @@ export default function App() {
                   <h2 className="text-3xl font-bold text-gray-900">Imóveis</h2>
                   <p className="text-gray-500">Gerencie seu portfólio de propriedades</p>
                 </div>
-                  <div className="flex gap-2">
-                    <Button variant="secondary" onClick={() => setView('comparison-pdf')} icon={Scale}>IA: Comparar PDFs</Button>
-                    {comparisonList.length > 1 && (
-                      <Button variant="secondary" onClick={() => setView('comparison')} icon={Scale}>Comparar ({comparisonList.length})</Button>
-                    )}
-                    <Button onClick={() => { setSelectedProperty(null); setView('property-form'); }} icon={Plus}>Novo Imóvel</Button>
-                  </div>
+                <div className="flex gap-2">
+                  {comparisonList.length > 1 && (
+                    <Button variant="secondary" onClick={() => setView('comparison')} icon={Scale}>Comparar ({comparisonList.length})</Button>
+                  )}
+                  <Button onClick={() => { setSelectedProperty(null); setView('property-form'); }} icon={Plus}>Novo Imóvel</Button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -730,18 +503,7 @@ export default function App() {
                   </div>
                   <div className="space-y-3">
                     {inspections.map(ins => (
-                      <Card 
-                        key={ins.id} 
-                        onClick={() => { 
-                          setSelectedInspection(ins); 
-                          if (ins.status === 'Completed') {
-                            setView('inspection-report');
-                          } else {
-                            setView('inspection-view'); 
-                          }
-                        }} 
-                        className="p-4 flex items-center justify-between hover:bg-gray-50 group"
-                      >
+                      <Card key={ins.id} onClick={() => { setSelectedInspection(ins); setView('inspection-view'); }} className="p-4 flex items-center justify-between hover:bg-gray-50 group">
                         <div className="flex items-center gap-4">
                           <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", ins.type === 'Entry' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600")}><ClipboardList size={20} /></div>
                           <div>
@@ -826,207 +588,6 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === 'comparison-pdf' && (
-            <motion.div key="comparison-pdf" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="max-w-3xl mx-auto space-y-8">
-              <div className="flex items-center gap-4">
-                <Button variant="ghost" onClick={() => setView('dashboard')} icon={ArrowLeft}>Voltar</Button>
-                <h2 className="text-3xl font-bold">Comparação de Vistorias (PDF)</h2>
-              </div>
-              
-              <Card className="p-8 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-4">
-                    <label className="text-sm font-bold text-gray-700 block">Vistoria de Entrada (PDF)</label>
-                    <div className="relative group">
-                      <input 
-                        type="file" 
-                        accept="application/pdf"
-                        onChange={(e) => e.target.files?.[0] && handlePDFUpload(e.target.files[0], 'entry')}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                      />
-                      <div className={cn(
-                        "p-6 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-2 transition-all",
-                        entryPdf ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-gray-200 bg-gray-50 text-gray-400 group-hover:border-indigo-300 group-hover:bg-indigo-50"
-                      )}>
-                        <ClipboardList size={32} />
-                        <span className="text-xs font-bold uppercase tracking-widest">
-                          {entryPdf ? entryPdf.name : 'Selecionar PDF de Entrada'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <label className="text-sm font-bold text-gray-700 block">Vistoria de Saída (PDF)</label>
-                    <div className="relative group">
-                      <input 
-                        type="file" 
-                        accept="application/pdf"
-                        onChange={(e) => e.target.files?.[0] && handlePDFUpload(e.target.files[0], 'exit')}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                      />
-                      <div className={cn(
-                        "p-6 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-2 transition-all",
-                        exitPdf ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-gray-200 bg-gray-50 text-gray-400 group-hover:border-indigo-300 group-hover:bg-indigo-50"
-                      )}>
-                        <ClipboardList size={32} />
-                        <span className="text-xs font-bold uppercase tracking-widest">
-                          {exitPdf ? exitPdf.name : 'Selecionar PDF de Saída'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <Button 
-                  className="w-full py-4 text-lg" 
-                  onClick={runPDFComparison} 
-                  disabled={!entryPdf || !exitPdf || isComparingPDFs}
-                  icon={isComparingPDFs ? Loader2 : Sparkles}
-                >
-                  {isComparingPDFs ? 'Analisando Divergências...' : 'Gerar Laudo de Comparação com IA'}
-                </Button>
-
-                {pdfReport && (
-                  <div className="pt-8 border-t border-gray-100 space-y-4">
-                    <div className="flex items-center gap-2 text-indigo-600">
-                      <CheckCircle2 size={20} />
-                      <h3 className="font-bold">Laudo de Divergências Gerado</h3>
-                    </div>
-                    <div className="bg-gray-50 p-6 rounded-2xl prose prose-sm max-w-none text-gray-700">
-                      <ReactMarkdown>{pdfReport}</ReactMarkdown>
-                    </div>
-                    <Button variant="secondary" onClick={() => { setPdfReport(null); setEntryPdf(null); setExitPdf(null); }} icon={X}>Limpar</Button>
-                  </div>
-                )}
-              </Card>
-            </motion.div>
-          )}
-
-          {view === 'inspection-report' && selectedInspection && (
-            <motion.div key="inspection-report" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-8 print:space-y-4">
-              <div className="flex items-center justify-between print:hidden">
-                <div className="flex items-center gap-4">
-                  <Button variant="ghost" onClick={() => setView('dashboard')} icon={ArrowLeft}>Voltar</Button>
-                  <div>
-                    <h2 className="text-2xl font-bold">Laudo de Vistoria</h2>
-                    <p className="text-sm text-gray-500">{selectedProperty?.address}</p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="secondary" onClick={() => window.print()} icon={Printer}>Imprimir PDF</Button>
-                  <Button onClick={() => setView('dashboard')}>Sair</Button>
-                </div>
-              </div>
-
-              <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 space-y-8 print:shadow-none print:border-none print:p-0">
-                <div className="text-center space-y-2 border-b border-gray-100 pb-8">
-                  <h1 className="text-3xl font-bold text-gray-900 uppercase tracking-tight">Laudo de Vistoria de {selectedInspection.type === 'Entry' ? 'Entrada' : 'Saída'}</h1>
-                  <p className="text-gray-500">Imóvel: {selectedProperty?.address}</p>
-                  <p className="text-gray-400 text-sm">Data: {new Date(selectedInspection.date?.toDate?.() || Date.now()).toLocaleDateString()}</p>
-                </div>
-
-                <div className="space-y-12">
-                  {rooms.map(room => {
-                    const roomMedia = media.filter(m => m.roomId === room.id);
-                    return (
-                      <div key={room.id} className="space-y-6 break-inside-avoid border-b border-gray-100 pb-8 last:border-0">
-                        <div className="flex items-center gap-3">
-                          <div className="w-2 h-6 bg-indigo-600 rounded-full"></div>
-                          <h3 className="text-xl font-bold text-gray-800">{room.name}</h3>
-                        </div>
-                        
-                        <div className={`grid grid-cols-1 ${roomMedia.length > 0 ? 'md:grid-cols-2' : ''} gap-8`}>
-                          <div className="space-y-4">
-                            {room.notes && (
-                              <div className="space-y-2">
-                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Observações Gerais</h4>
-                                <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-sm">{room.notes}</p>
-                              </div>
-                            )}
-
-                            {room.aiAnalysis && (
-                              <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100 space-y-2">
-                                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1">
-                                  <Sparkles size={12} /> Análise IA do Cômodo
-                                </h4>
-                                <div className="prose prose-sm max-w-none text-indigo-900 leading-relaxed text-xs">
-                                  <ReactMarkdown>{room.aiAnalysis}</ReactMarkdown>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {roomMedia.length > 0 && (
-                            <>
-                              {/* Screen View: Carousel */}
-                              <MediaCarousel media={roomMedia} className="print:hidden" />
-
-                              {/* Print View: Grid */}
-                              <div className="hidden print:grid grid-cols-2 gap-3">
-                                {roomMedia.slice(0, 4).map(m => (
-                                  <div key={m.id} className="space-y-1 break-inside-avoid">
-                                    <div className="aspect-square bg-gray-50 rounded-lg overflow-hidden border border-gray-100">
-                                      {m.type === 'photo' ? (
-                                        <img src={m.url} alt="Mídia" className="w-full h-full object-cover" />
-                                      ) : (
-                                        <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
-                                          <VideoIcon size={20} />
-                                        </div>
-                                      )}
-                                    </div>
-                                    {m.aiAnalysis && (
-                                      <p className="text-[9px] text-gray-400 italic line-clamp-2 leading-tight">
-                                        {m.aiAnalysis.replace(/^#+\s*/, '')}
-                                      </p>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </>
-                          )}
-                        </div>
-
-                        {roomMedia.length > 4 && (
-                          <div className="hidden print:grid grid-cols-4 md:grid-cols-6 gap-2 pt-4">
-                            {roomMedia.slice(4).map(m => (
-                              <div key={m.id} className="aspect-square bg-gray-50 rounded-md overflow-hidden border border-gray-100">
-                                {m.type === 'photo' ? (
-                                  <img src={m.url} alt="Mídia" className="w-full h-full object-cover" />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
-                                    <VideoIcon size={16} />
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="pt-12 border-t border-gray-100 grid grid-cols-2 gap-12 text-center">
-                  <div className="space-y-8">
-                    <div className="h-px bg-gray-200 w-full"></div>
-                    <div>
-                      <p className="font-bold text-gray-900">{userProfile?.displayName}</p>
-                      <p className="text-xs text-gray-400 uppercase tracking-widest">Vistoriador</p>
-                    </div>
-                  </div>
-                  <div className="space-y-8">
-                    <div className="h-px bg-gray-200 w-full"></div>
-                    <div>
-                      <p className="font-bold text-gray-900">{selectedProperty?.tenantName || 'Inquilino'}</p>
-                      <p className="text-xs text-gray-400 uppercase tracking-widest">Inquilino / Responsável</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
           {view === 'inspection-view' && selectedInspection && (
             <motion.div key="inspection-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-8">
               <div className="flex items-center justify-between">
@@ -1082,39 +643,12 @@ export default function App() {
                         </div>
                         
                         <div className="flex flex-wrap gap-3">
-                          <div className="relative">
-                            <input 
-                              type="file" 
-                              accept="image/*" 
-                              multiple
-                              onChange={(e) => e.target.files && handleMediaUpload(room.id, 'photo', e.target.files)}
-                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
-                              <Camera size={16} /> Adicionar Fotos
-                            </button>
-                          </div>
-                          <div className="relative">
-                            <input 
-                              type="file" 
-                              accept="video/*" 
-                              multiple
-                              onChange={(e) => e.target.files && handleMediaUpload(room.id, 'video', e.target.files)}
-                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                            />
-                            <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
-                              <VideoIcon size={16} /> Adicionar Vídeos
-                            </button>
-                          </div>
-                          <Button 
-                            variant="secondary" 
-                            className="text-xs font-bold text-indigo-600 bg-indigo-50 border-none"
-                            onClick={() => analyzeRoom(room.id)}
-                            disabled={isAnalyzingRoom === room.id || media.filter(m => m.roomId === room.id).length === 0}
-                            icon={isAnalyzingRoom === room.id ? Loader2 : Sparkles}
-                          >
-                            {isAnalyzingRoom === room.id ? 'Analisando Cômodo...' : 'IA: Analisar Cômodo Completo'}
-                          </Button>
+                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                            <Camera size={16} /> Adicionar Foto
+                          </button>
+                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                            <VideoIcon size={16} /> Adicionar Vídeo
+                          </button>
                           <button 
                             onClick={async () => {
                               const mockAudioBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
@@ -1139,80 +673,15 @@ export default function App() {
                             <Play size={16} /> IA: Ouvir Notas
                           </button>
                         </div>
-                        <p className="text-[10px] text-gray-400 italic px-2">Dica: Selecione vários arquivos de uma vez e use a IA para uma análise unificada do cômodo.</p>
 
-
-                        {room.aiAnalysis && (
-                          <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100 space-y-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2 text-indigo-600">
-                                <Sparkles size={18} />
-                                <h4 className="text-sm font-bold uppercase tracking-wider">Análise Completa do Cômodo</h4>
-                              </div>
-                              <div className="flex gap-2">
-                                <button 
-                                  onClick={() => updateRoomNotes(room.id, (room.notes ? room.notes + '\n\n' : '') + room.aiAnalysis)}
-                                  className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
-                                >
-                                  <Save size={12} /> Copiar para Notas
-                                </button>
-                                <button 
-                                  onClick={() => updateDoc(doc(db, 'rooms', room.id), { aiAnalysis: '' })}
-                                  className="text-[10px] font-bold text-red-500 hover:underline flex items-center gap-1"
-                                >
-                                  <X size={12} /> Limpar
-                                </button>
-                              </div>
-                            </div>
-                            <div className="prose prose-sm max-w-none text-indigo-900 leading-relaxed">
-                              <ReactMarkdown>{room.aiAnalysis}</ReactMarkdown>
-                            </div>
+                        {/* Media Preview Placeholder */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-50">
+                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
+                            <ImageIcon size={24} />
                           </div>
-                        )}
-
-                        {/* Media Preview */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-50">
-                          {media.filter(m => m.roomId === room.id).map(m => (
-                            <div key={m.id} className="space-y-2">
-                              <div className="relative aspect-video bg-gray-100 rounded-2xl overflow-hidden group">
-                                {m.type === 'photo' ? (
-                                  <img src={m.url} alt="Vistoria" className="w-full h-full object-cover" />
-                                ) : (
-                                  <video src={m.url} className="w-full h-full object-cover" controls />
-                                )}
-                                <button 
-                                  onClick={() => deleteMedia(m.id)}
-                                  className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                                >
-                                  <X size={14} />
-                                </button>
-                              </div>
-                              <div className="space-y-2">
-                                <Button 
-                                  variant="secondary" 
-                                  className="w-full text-[10px] py-1.5 h-auto font-bold uppercase tracking-widest"
-                                  onClick={() => analyzeMedia(m.id)}
-                                  disabled={isAnalyzingMedia === m.id}
-                                  icon={isAnalyzingMedia === m.id ? Loader2 : Sparkles}
-                                >
-                                  {isAnalyzingMedia === m.id ? 'Analisando...' : 'IA: Analisar Mídia'}
-                                </Button>
-                                {m.aiAnalysis && (
-                                  <div className="p-3 bg-indigo-50 rounded-xl text-[11px] text-indigo-800 leading-relaxed italic">
-                                    <ReactMarkdown>{m.aiAnalysis}</ReactMarkdown>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                          {(!room.media || room.media.length === 0) && (
-                            <div className="col-span-full py-8 text-center space-y-2">
-                              <div className="w-12 h-12 bg-gray-50 text-gray-300 rounded-full flex items-center justify-center mx-auto">
-                                <ImageIcon size={24} />
-                              </div>
-                              <p className="text-xs text-gray-400">Nenhuma foto ou vídeo adicionado</p>
-                            </div>
-                          )}
+                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
+                            <VideoIcon size={24} />
+                          </div>
                         </div>
                       </Card>
                     </div>

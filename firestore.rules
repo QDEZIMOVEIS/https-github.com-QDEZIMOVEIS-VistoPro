@@ -41,8 +41,6 @@ service cloud.firestore {
     //   - inspectionId: string (required)
     //   - name: string (required)
     //   - order: number (required)
-    //   - notes: string (optional)
-    //   - media: list (optional)
     //
     // Collection: items
     // Document ID: {itemId}
@@ -116,10 +114,7 @@ service cloud.firestore {
       return data.keys().hasAll(['inspectionId', 'name', 'order']) &&
              data.inspectionId is string &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.order is number &&
-             (!('notes' in data) || data.notes is string) &&
-             (!('media' in data) || data.media is list) &&
-             (!('aiAnalysis' in data) || data.aiAnalysis is string);
+             data.order is number;
     }
 
     function isValidItem(data) {
@@ -140,9 +135,9 @@ service cloud.firestore {
     }
 
     match /favorites/{favoriteId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && isValidFavorite(request.resource.data);
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     match /properties/{propertyId} {
@@ -160,21 +155,14 @@ service cloud.firestore {
     }
 
     match /rooms/{roomId} {
-      allow read: if isAuthenticated() && (get(/databases/$(database)/documents/inspections/$(resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && isValidRoom(request.resource.data) && (get(/databases/$(database)/documents/inspections/$(request.resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
-      allow update: if isAuthenticated() && isValidRoom(request.resource.data) && (get(/databases/$(database)/documents/inspections/$(resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (get(/databases/$(database)/documents/inspections/$(resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
-    }
-
-    match /media/{mediaId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
+      allow read: if isAuthenticated(); // Scoped by inspectionId in queries
+      allow create: if isAuthenticated() && isValidRoom(request.resource.data);
+      allow update: if isAuthenticated() && isValidRoom(request.resource.data);
       allow delete: if isAuthenticated();
     }
 
     match /items/{itemId} {
-      allow read: if isAuthenticated(); // Scoped by roomId in queries, but could be tightened
+      allow read: if isAuthenticated(); // Scoped by roomId in queries
       allow create: if isAuthenticated() && isValidItem(request.resource.data);
       allow update: if isAuthenticated() && isValidItem(request.resource.data);
       allow delete: if isAuthenticated();
