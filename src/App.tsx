@@ -139,7 +139,8 @@ export default function App() {
   const [pdfReport, setPdfReport] = useState<string | null>(null);
   const [entryPdf, setEntryPdf] = useState<{ name: string, base64: string } | null>(null);
   const [exitPdf, setExitPdf] = useState<{ name: string, base64: string } | null>(null);
-  const [isAnalyzingMedia, setIsAnalyzingMedia] = useState<string | null>(null); // mediaId
+  const [isAnalyzingMedia, setIsAnalyzingMedia] = useState<string | null>(null); // mediaId or roomId
+  const [isAnalyzingRoom, setIsAnalyzingRoom] = useState<string | null>(null); // roomId
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
 
@@ -250,31 +251,59 @@ export default function App() {
     try { await signInWithPopup(auth, googleProvider); } catch (err) { console.error(err); }
   };
 
-  const handleMediaUpload = async (roomId: string, type: 'photo' | 'video', file: File) => {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64 = (e.target?.result as string).split(',')[1];
-      const url = e.target?.result as string;
-      const newMedia: Media = {
-        id: Math.random().toString(36).substr(2, 9),
-        type,
-        url,
-        base64,
-        createdAt: new Date()
-      };
-      const room = rooms.find(r => r.id === roomId);
-      if (room) {
-        const updatedMedia = [...(room.media || []), newMedia];
-        updateRoomMedia(roomId, updatedMedia);
-      }
-    };
-    reader.readAsDataURL(file);
+  const handleMediaUpload = async (roomId: string, type: 'photo' | 'video', files: FileList) => {
+    const fileArray = Array.from(files);
+    
+    const uploadPromises = fileArray.map(file => {
+      return new Promise<Media>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const base64 = (e.target?.result as string).split(',')[1];
+          const url = e.target?.result as string;
+          resolve({
+            id: Math.random().toString(36).substr(2, 9),
+            type,
+            url,
+            base64,
+            createdAt: new Date()
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    const newMediaItems = await Promise.all(uploadPromises);
+
+    const room = rooms.find(r => r.id === roomId);
+    if (room) {
+      const updatedMedia = [...(room.media || []), ...newMediaItems];
+      updateRoomMedia(roomId, updatedMedia);
+    }
   };
 
   const updateRoomMedia = async (roomId: string, media: Media[]) => {
     try {
       await updateDoc(doc(db, 'rooms', roomId), { media });
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'rooms'); }
+  };
+
+  const analyzeRoom = async (roomId: string) => {
+    const room = rooms.find(r => r.id === roomId);
+    if (!room || !room.media || room.media.length === 0) return;
+
+    setIsAnalyzingRoom(roomId);
+    try {
+      const mediaItems = room.media.filter(m => !!m.base64).map(m => ({
+        base64: m.base64!,
+        type: m.type
+      }));
+      const analysis = await aiService.analyzeRoomMedia(mediaItems);
+      await updateDoc(doc(db, 'rooms', roomId), { aiAnalysis: analysis });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsAnalyzingRoom(null);
+    }
   };
 
   const analyzeMedia = async (roomId: string, mediaId: string) => {
@@ -802,24 +831,35 @@ export default function App() {
                             <input 
                               type="file" 
                               accept="image/*" 
-                              onChange={(e) => e.target.files?.[0] && handleMediaUpload(room.id, 'photo', e.target.files[0])}
+                              multiple
+                              onChange={(e) => e.target.files && handleMediaUpload(room.id, 'photo', e.target.files)}
                               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                             />
                             <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
-                              <Camera size={16} /> Adicionar Foto
+                              <Camera size={16} /> Adicionar Fotos
                             </button>
                           </div>
                           <div className="relative">
                             <input 
                               type="file" 
                               accept="video/*" 
-                              onChange={(e) => e.target.files?.[0] && handleMediaUpload(room.id, 'video', e.target.files[0])}
+                              multiple
+                              onChange={(e) => e.target.files && handleMediaUpload(room.id, 'video', e.target.files)}
                               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                             />
                             <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
-                              <VideoIcon size={16} /> Adicionar Vídeo
+                              <VideoIcon size={16} /> Adicionar Vídeos
                             </button>
                           </div>
+                          <Button 
+                            variant="secondary" 
+                            className="text-xs font-bold text-indigo-600 bg-indigo-50 border-none"
+                            onClick={() => analyzeRoom(room.id)}
+                            disabled={isAnalyzingRoom === room.id || !room.media || room.media.length === 0}
+                            icon={isAnalyzingRoom === room.id ? Loader2 : Sparkles}
+                          >
+                            {isAnalyzingRoom === room.id ? 'Analisando Cômodo...' : 'IA: Analisar Cômodo Completo'}
+                          </Button>
                           <button 
                             onClick={async () => {
                               const mockAudioBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
@@ -844,6 +884,36 @@ export default function App() {
                             <Play size={16} /> IA: Ouvir Notas
                           </button>
                         </div>
+                        <p className="text-[10px] text-gray-400 italic px-2">Dica: Selecione vários arquivos de uma vez e use a IA para uma análise unificada do cômodo.</p>
+
+
+                        {room.aiAnalysis && (
+                          <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-indigo-600">
+                                <Sparkles size={18} />
+                                <h4 className="text-sm font-bold uppercase tracking-wider">Análise Completa do Cômodo</h4>
+                              </div>
+                              <div className="flex gap-2">
+                                <button 
+                                  onClick={() => updateRoomNotes(room.id, (room.notes ? room.notes + '\n\n' : '') + room.aiAnalysis)}
+                                  className="text-[10px] font-bold text-indigo-600 hover:underline flex items-center gap-1"
+                                >
+                                  <Save size={12} /> Copiar para Notas
+                                </button>
+                                <button 
+                                  onClick={() => updateDoc(doc(db, 'rooms', room.id), { aiAnalysis: '' })}
+                                  className="text-[10px] font-bold text-red-500 hover:underline flex items-center gap-1"
+                                >
+                                  <X size={12} /> Limpar
+                                </button>
+                              </div>
+                            </div>
+                            <div className="prose prose-sm max-w-none text-indigo-900 leading-relaxed">
+                              <ReactMarkdown>{room.aiAnalysis}</ReactMarkdown>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Media Preview */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-50">

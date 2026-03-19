@@ -62,6 +62,26 @@ export async function analyzeInspectionMedia(base64Data: string, mimeType: strin
   return response.text;
 }
 
+export async function analyzeRoomMedia(mediaItems: { base64: string, type: 'photo' | 'video' }[]) {
+  const ai = getAI();
+  const parts: any[] = mediaItems.map(m => ({
+    inlineData: {
+      data: m.base64,
+      mimeType: m.type === 'photo' ? 'image/jpeg' : 'video/mp4'
+    }
+  }));
+  
+  parts.push({
+    text: "Analise todas estas mídias de um mesmo cômodo em uma vistoria imobiliária. Faça uma descrição unificada do estado de conservação do cômodo, identifique danos, sujeira ou necessidade de manutenção em todos os elementos mostrados. Seja técnico, detalhista e organize por categorias se necessário. Responda em português."
+  });
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.1-pro-preview",
+    contents: { parts }
+  });
+  return response.text;
+}
+
 export async function comparePDFs(pdf1Base64: string, pdf2Base64: string) {
   const ai = getAI();
   const response = await ai.models.generateContent({

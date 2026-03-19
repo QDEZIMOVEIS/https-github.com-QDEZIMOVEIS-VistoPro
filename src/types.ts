@@ -60,6 +60,7 @@ export interface Room {
   order: number;
   notes: string;
   media: Media[];
+  aiAnalysis?: string;
 }
 
 export interface Item {
