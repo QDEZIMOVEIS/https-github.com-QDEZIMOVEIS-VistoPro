@@ -12,7 +12,7 @@ import {
 import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite, Media } from './types';
 import { handleFirestoreError } from './errorUtils';
 import { 
-  Plus, LogOut, Home, ClipboardList, ChevronRight, CheckCircle2, 
+  Plus, LogOut, Home, ClipboardList, ChevronRight, ChevronLeft, CheckCircle2, 
   Camera, Save, ArrowLeft, User, Settings, Heart, Scale, X, Info,
   MessageSquare, Sparkles, Mic, Play, Loader2, Image as ImageIcon,
   Video as VideoIcon, Wand2, Printer
@@ -113,6 +113,91 @@ const Badge = ({ children, variant = 'neutral' }: { children: React.ReactNode, v
 };
 
 // --- Main App ---
+
+const MediaCarousel = ({ media, className }: { media: Media[], className?: string }) => {
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  if (media.length === 0) return null;
+
+  const next = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev + 1) % media.length);
+  };
+  const prev = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev - 1 + media.length) % media.length);
+  };
+
+  const current = media[currentIndex];
+
+  return (
+    <div className={cn("relative group", className)}>
+      <div className="aspect-video bg-gray-900 rounded-2xl overflow-hidden relative shadow-lg border border-gray-800">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={current.id}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            className="w-full h-full flex items-center justify-center"
+          >
+            {current.type === 'photo' ? (
+              <img src={current.url} alt="Mídia" className="w-full h-full object-contain" />
+            ) : (
+              <video src={current.url} controls className="w-full h-full object-contain" />
+            )}
+          </motion.div>
+        </AnimatePresence>
+
+        {media.length > 1 && (
+          <>
+            <button
+              onClick={prev}
+              className="absolute left-4 top-1/2 -translate-y-1/2 p-2.5 bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all z-10"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <button
+              onClick={next}
+              className="absolute right-4 top-1/2 -translate-y-1/2 p-2.5 bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-all z-10"
+            >
+              <ChevronRight size={20} />
+            </button>
+          </>
+        )}
+
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
+          {media.map((_, i) => (
+            <button
+              key={i}
+              onClick={(e) => { e.stopPropagation(); setCurrentIndex(i); }}
+              className={cn(
+                "w-1.5 h-1.5 rounded-full transition-all",
+                i === currentIndex ? "bg-white w-4" : "bg-white/40 hover:bg-white/60"
+              )}
+            />
+          ))}
+        </div>
+        
+        <div className="absolute top-4 right-4 px-2 py-1 bg-black/40 backdrop-blur-sm rounded-lg text-[10px] font-bold text-white uppercase tracking-widest z-10">
+          {currentIndex + 1} / {media.length}
+        </div>
+      </div>
+
+      {current.aiAnalysis && (
+        <div className="mt-4 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100/50">
+          <h5 className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1 flex items-center gap-1">
+            <Sparkles size={10} /> Análise da Mídia Selecionada
+          </h5>
+          <div className="text-xs text-indigo-900 leading-relaxed italic prose prose-sm max-w-none">
+            <ReactMarkdown>{current.aiAnalysis}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -842,54 +927,84 @@ export default function App() {
                 </div>
 
                 <div className="space-y-12">
-                  {rooms.map(room => (
-                    <div key={room.id} className="space-y-6 break-inside-avoid">
-                      <div className="flex items-center gap-3 border-b border-gray-50 pb-2">
-                        <div className="w-2 h-6 bg-indigo-600 rounded-full"></div>
-                        <h3 className="text-xl font-bold text-gray-800">{room.name}</h3>
-                      </div>
-                      
-                      {room.notes && (
-                        <div className="space-y-2">
-                          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Observações</h4>
-                          <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">{room.notes}</p>
+                  {rooms.map(room => {
+                    const roomMedia = media.filter(m => m.roomId === room.id);
+                    return (
+                      <div key={room.id} className="space-y-6 break-inside-avoid border-b border-gray-100 pb-8 last:border-0">
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-6 bg-indigo-600 rounded-full"></div>
+                          <h3 className="text-xl font-bold text-gray-800">{room.name}</h3>
                         </div>
-                      )}
+                        
+                        <div className={`grid grid-cols-1 ${roomMedia.length > 0 ? 'md:grid-cols-2' : ''} gap-8`}>
+                          <div className="space-y-4">
+                            {room.notes && (
+                              <div className="space-y-2">
+                                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Observações Gerais</h4>
+                                <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-sm">{room.notes}</p>
+                              </div>
+                            )}
 
-                      {room.aiAnalysis && (
-                        <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100 space-y-2">
-                          <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1">
-                            <Sparkles size={12} /> Análise IA
-                          </h4>
-                          <div className="prose prose-sm max-w-none text-indigo-900 leading-relaxed">
-                            <ReactMarkdown>{room.aiAnalysis}</ReactMarkdown>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        {media.filter(m => m.roomId === room.id).map(m => (
-                          <div key={m.id} className="space-y-2 break-inside-avoid">
-                            <div className="aspect-video bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
-                              {m.type === 'photo' ? (
-                                <img src={m.url} alt="Mídia" className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
-                                  <VideoIcon size={24} />
-                                  <span className="text-[10px] ml-2 font-bold uppercase">Vídeo</span>
+                            {room.aiAnalysis && (
+                              <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100 space-y-2">
+                                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1">
+                                  <Sparkles size={12} /> Análise IA do Cômodo
+                                </h4>
+                                <div className="prose prose-sm max-w-none text-indigo-900 leading-relaxed text-xs">
+                                  <ReactMarkdown>{room.aiAnalysis}</ReactMarkdown>
                                 </div>
-                              )}
-                            </div>
-                            {m.aiAnalysis && (
-                              <div className="p-2 bg-gray-50 rounded-lg text-[10px] text-gray-500 italic leading-tight">
-                                <ReactMarkdown>{m.aiAnalysis}</ReactMarkdown>
                               </div>
                             )}
                           </div>
-                        ))}
+
+                          {roomMedia.length > 0 && (
+                            <>
+                              {/* Screen View: Carousel */}
+                              <MediaCarousel media={roomMedia} className="print:hidden" />
+
+                              {/* Print View: Grid */}
+                              <div className="hidden print:grid grid-cols-2 gap-3">
+                                {roomMedia.slice(0, 4).map(m => (
+                                  <div key={m.id} className="space-y-1 break-inside-avoid">
+                                    <div className="aspect-square bg-gray-50 rounded-lg overflow-hidden border border-gray-100">
+                                      {m.type === 'photo' ? (
+                                        <img src={m.url} alt="Mídia" className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
+                                          <VideoIcon size={20} />
+                                        </div>
+                                      )}
+                                    </div>
+                                    {m.aiAnalysis && (
+                                      <p className="text-[9px] text-gray-400 italic line-clamp-2 leading-tight">
+                                        {m.aiAnalysis.replace(/^#+\s*/, '')}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {roomMedia.length > 4 && (
+                          <div className="hidden print:grid grid-cols-4 md:grid-cols-6 gap-2 pt-4">
+                            {roomMedia.slice(4).map(m => (
+                              <div key={m.id} className="aspect-square bg-gray-50 rounded-md overflow-hidden border border-gray-100">
+                                {m.type === 'photo' ? (
+                                  <img src={m.url} alt="Mídia" className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
+                                    <VideoIcon size={16} />
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="pt-12 border-t border-gray-100 grid grid-cols-2 gap-12 text-center">
