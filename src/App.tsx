@@ -8,7 +8,7 @@ import {
   auth, db, storage, googleProvider, signInWithPopup, signOut, onAuthStateChanged, 
   collection, doc, setDoc, getDoc, query, where, onSnapshot, 
   addDoc, updateDoc, deleteDoc, serverTimestamp, FirebaseUser,
-  ref, uploadBytes, getDownloadURL, deleteObject
+  ref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject, UploadTask
 } from './firebase';
 import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite, Media } from './types';
 import { handleFirestoreError } from './errorUtils';
@@ -128,6 +128,7 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [comparisonList, setComparisonList] = useState<Property[]>([]);
+  const [activeUploads, setActiveUploads] = useState<Record<string, { progress: number, task: UploadTask, roomId: string }>>({});
 
   // AI State
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -258,6 +259,16 @@ export default function App() {
     } catch (err) { handleFirestoreError(err, OperationType.CREATE, 'properties'); }
   };
 
+  const deleteProperty = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este imóvel e todas as suas vistorias?')) return;
+    try {
+      await deleteDoc(doc(db, 'properties', id));
+      if (selectedProperty?.id === id) {
+        setSelectedProperty(null);
+      }
+    } catch (err) { handleFirestoreError(err, OperationType.DELETE, 'properties'); }
+  };
+
   const createInspection = async (type: 'Entry' | 'Exit' | 'Periodic') => {
     if (!selectedProperty || !user) return;
     try {
@@ -321,28 +332,72 @@ export default function App() {
 
   const handleFileUpload = async (roomId: string, file: File, type: 'photo' | 'video') => {
     if (!user || !selectedInspection) return;
+    const fileId = Math.random().toString(36).substring(7);
+    const uploadId = `${roomId}_${fileId}`;
+    
     try {
-      const fileId = Math.random().toString(36).substring(7);
       const storageRef = ref(storage, `inspections/${selectedInspection.id}/rooms/${roomId}/${fileId}_${file.name}`);
+      const uploadTask = uploadBytesResumable(storageRef, file);
       
-      const snapshot = await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(snapshot.ref);
-      
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) return;
-      
-      const newMedia: Media = {
-        id: fileId,
-        type,
-        url,
-        createdAt: new Date()
-      };
-      
-      const updatedMedia = [...(room.media || []), newMedia];
-      await updateDoc(doc(db, 'rooms', roomId), { media: updatedMedia });
+      setActiveUploads(prev => ({
+        ...prev,
+        [uploadId]: { progress: 0, task: uploadTask, roomId }
+      }));
+
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setActiveUploads(prev => ({
+            ...prev,
+            [uploadId]: { ...prev[uploadId], progress }
+          }));
+        }, 
+        (error) => {
+          console.error('Upload failed:', error);
+          setActiveUploads(prev => {
+            const next = { ...prev };
+            delete next[uploadId];
+            return next;
+          });
+          if (error.code !== 'storage/canceled') {
+            alert('Erro ao fazer upload do arquivo.');
+          }
+        }, 
+        async () => {
+          const url = await getDownloadURL(uploadTask.snapshot.ref);
+          const room = rooms.find(r => r.id === roomId);
+          if (room) {
+            const newMedia: Media = {
+              id: fileId,
+              type,
+              url,
+              createdAt: new Date()
+            };
+            const updatedMedia = [...(room.media || []), newMedia];
+            await updateDoc(doc(db, 'rooms', roomId), { media: updatedMedia });
+          }
+          setActiveUploads(prev => {
+            const next = { ...prev };
+            delete next[uploadId];
+            return next;
+          });
+        }
+      );
     } catch (err) {
-      console.error('Error uploading file:', err);
-      alert('Erro ao fazer upload do arquivo.');
+      console.error('Error initiating upload:', err);
+      alert('Erro ao iniciar upload.');
+    }
+  };
+
+  const cancelUpload = (uploadId: string) => {
+    const upload = activeUploads[uploadId];
+    if (upload) {
+      upload.task.cancel();
+      setActiveUploads(prev => {
+        const next = { ...prev };
+        delete next[uploadId];
+        return next;
+      });
     }
   };
 
@@ -523,6 +578,7 @@ export default function App() {
                           <div className="flex gap-2">
                             <button onClick={(e) => { e.stopPropagation(); toggleComparison(p); }} className={cn("p-2 rounded-lg transition-colors", isComparing ? "bg-indigo-100 text-indigo-600" : "bg-gray-100 text-gray-400")}><Scale size={16} /></button>
                             <button onClick={(e) => { e.stopPropagation(); toggleFavorite(p.id); }} className={cn("p-2 rounded-lg transition-colors", isFav ? "bg-red-50 text-red-500" : "bg-gray-100 text-gray-400")}><Heart size={16} fill={isFav ? "currentColor" : "none"} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); deleteProperty(p.id); }} className="p-2 rounded-lg bg-gray-100 text-gray-400 hover:text-red-500 transition-colors"><X size={16} /></button>
                           </div>
                         </div>
                         <div>
@@ -745,9 +801,32 @@ export default function App() {
                         </div>
 
                         {/* Media Preview */}
-                        {room.media && room.media.length > 0 && (
+                        {( (room.media && room.media.length > 0) || Object.values(activeUploads).some((u: any) => u.roomId === room.id) ) && (
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-50">
-                            {room.media.map((m) => (
+                            {/* Active Uploads */}
+                            {Object.entries(activeUploads)
+                              .filter(([_, u]: [string, any]) => u.roomId === room.id)
+                              .map(([id, u]: [string, any]) => (
+                                <div key={id} className="relative aspect-square bg-indigo-50 rounded-2xl overflow-hidden border border-indigo-100 flex flex-col items-center justify-center p-4">
+                                  <Loader2 className="text-indigo-600 animate-spin mb-2" size={24} />
+                                  <div className="w-full bg-gray-200 rounded-full h-1.5 mb-2">
+                                    <div 
+                                      className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300" 
+                                      style={{ width: `${u.progress}%` }}
+                                    ></div>
+                                  </div>
+                                  <p className="text-[10px] font-bold text-indigo-600 mb-2">{Math.round(u.progress)}%</p>
+                                  <button 
+                                    onClick={() => cancelUpload(id)}
+                                    className="text-[10px] text-red-500 font-bold hover:underline"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ))}
+
+                            {/* Existing Media */}
+                            {room.media?.map((m) => (
                               <div key={m.id} className="relative aspect-square bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 group/media">
                                 {m.type === 'photo' ? (
                                   <img 
