@@ -41,6 +41,8 @@ service cloud.firestore {
     //   - inspectionId: string (required)
     //   - name: string (required)
     //   - order: number (required)
+    //   - notes: string (optional)
+    //   - media: list (optional)
     //
     // Collection: items
     // Document ID: {itemId}
@@ -114,7 +116,9 @@ service cloud.firestore {
       return data.keys().hasAll(['inspectionId', 'name', 'order']) &&
              data.inspectionId is string &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.order is number;
+             data.order is number &&
+             (!('notes' in data) || data.notes is string) &&
+             (!('media' in data) || data.media is list);
     }
 
     function isValidItem(data) {

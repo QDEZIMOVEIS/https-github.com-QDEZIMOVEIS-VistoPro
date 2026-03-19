@@ -9,7 +9,7 @@ import {
   collection, doc, setDoc, getDoc, query, where, onSnapshot, 
   addDoc, updateDoc, deleteDoc, serverTimestamp, FirebaseUser 
 } from './firebase';
-import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite } from './types';
+import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite, Media } from './types';
 import { handleFirestoreError } from './errorUtils';
 import { 
   Plus, LogOut, Home, ClipboardList, ChevronRight, CheckCircle2, 
@@ -21,6 +21,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import * as aiService from './geminiService';
+
+import ReactMarkdown from 'react-markdown';
 
 declare global {
   interface Window {
@@ -116,7 +118,7 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'dashboard' | 'property-form' | 'inspection-view' | 'comparison'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'property-form' | 'inspection-view' | 'comparison' | 'comparison-pdf'>('dashboard');
   
   // Data State
   const [properties, setProperties] = useState<Property[]>([]);
@@ -133,6 +135,11 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [isComparingPDFs, setIsComparingPDFs] = useState(false);
+  const [pdfReport, setPdfReport] = useState<string | null>(null);
+  const [entryPdf, setEntryPdf] = useState<{ name: string, base64: string } | null>(null);
+  const [exitPdf, setExitPdf] = useState<{ name: string, base64: string } | null>(null);
+  const [isAnalyzingMedia, setIsAnalyzingMedia] = useState<string | null>(null); // mediaId
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
 
@@ -241,6 +248,74 @@ export default function App() {
 
   const handleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } catch (err) { console.error(err); }
+  };
+
+  const handleMediaUpload = async (roomId: string, type: 'photo' | 'video', file: File) => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64 = (e.target?.result as string).split(',')[1];
+      const url = e.target?.result as string;
+      const newMedia: Media = {
+        id: Math.random().toString(36).substr(2, 9),
+        type,
+        url,
+        base64,
+        createdAt: new Date()
+      };
+      const room = rooms.find(r => r.id === roomId);
+      if (room) {
+        const updatedMedia = [...(room.media || []), newMedia];
+        updateRoomMedia(roomId, updatedMedia);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const updateRoomMedia = async (roomId: string, media: Media[]) => {
+    try {
+      await updateDoc(doc(db, 'rooms', roomId), { media });
+    } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'rooms'); }
+  };
+
+  const analyzeMedia = async (roomId: string, mediaId: string) => {
+    const room = rooms.find(r => r.id === roomId);
+    const media = room?.media?.find(m => m.id === mediaId);
+    if (!media || !media.base64) return;
+
+    setIsAnalyzingMedia(mediaId);
+    try {
+      const mimeType = media.type === 'photo' ? 'image/jpeg' : 'video/mp4';
+      const analysis = await aiService.analyzeInspectionMedia(media.base64, mimeType);
+      const updatedMedia = room.media.map(m => m.id === mediaId ? { ...m, aiAnalysis: analysis } : m);
+      await updateRoomMedia(roomId, updatedMedia);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsAnalyzingMedia(null);
+    }
+  };
+
+  const handlePDFUpload = (file: File, type: 'entry' | 'exit') => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const base64 = (e.target?.result as string).split(',')[1];
+      if (type === 'entry') setEntryPdf({ name: file.name, base64 });
+      else setExitPdf({ name: file.name, base64 });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const runPDFComparison = async () => {
+    if (!entryPdf || !exitPdf) return;
+    setIsComparingPDFs(true);
+    try {
+      const report = await aiService.comparePDFs(entryPdf.base64, exitPdf.base64);
+      setPdfReport(report);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsComparingPDFs(false);
+    }
   };
 
   const handleLogout = () => signOut(auth);
@@ -453,12 +528,13 @@ export default function App() {
                   <h2 className="text-3xl font-bold text-gray-900">Imóveis</h2>
                   <p className="text-gray-500">Gerencie seu portfólio de propriedades</p>
                 </div>
-                <div className="flex gap-2">
-                  {comparisonList.length > 1 && (
-                    <Button variant="secondary" onClick={() => setView('comparison')} icon={Scale}>Comparar ({comparisonList.length})</Button>
-                  )}
-                  <Button onClick={() => { setSelectedProperty(null); setView('property-form'); }} icon={Plus}>Novo Imóvel</Button>
-                </div>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={() => setView('comparison-pdf')} icon={Scale}>IA: Comparar PDFs</Button>
+                    {comparisonList.length > 1 && (
+                      <Button variant="secondary" onClick={() => setView('comparison')} icon={Scale}>Comparar ({comparisonList.length})</Button>
+                    )}
+                    <Button onClick={() => { setSelectedProperty(null); setView('property-form'); }} icon={Plus}>Novo Imóvel</Button>
+                  </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -590,6 +666,83 @@ export default function App() {
             </motion.div>
           )}
 
+          {view === 'comparison-pdf' && (
+            <motion.div key="comparison-pdf" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="max-w-3xl mx-auto space-y-8">
+              <div className="flex items-center gap-4">
+                <Button variant="ghost" onClick={() => setView('dashboard')} icon={ArrowLeft}>Voltar</Button>
+                <h2 className="text-3xl font-bold">Comparação de Vistorias (PDF)</h2>
+              </div>
+              
+              <Card className="p-8 space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-4">
+                    <label className="text-sm font-bold text-gray-700 block">Vistoria de Entrada (PDF)</label>
+                    <div className="relative group">
+                      <input 
+                        type="file" 
+                        accept="application/pdf"
+                        onChange={(e) => e.target.files?.[0] && handlePDFUpload(e.target.files[0], 'entry')}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      />
+                      <div className={cn(
+                        "p-6 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-2 transition-all",
+                        entryPdf ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-gray-200 bg-gray-50 text-gray-400 group-hover:border-indigo-300 group-hover:bg-indigo-50"
+                      )}>
+                        <ClipboardList size={32} />
+                        <span className="text-xs font-bold uppercase tracking-widest">
+                          {entryPdf ? entryPdf.name : 'Selecionar PDF de Entrada'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <label className="text-sm font-bold text-gray-700 block">Vistoria de Saída (PDF)</label>
+                    <div className="relative group">
+                      <input 
+                        type="file" 
+                        accept="application/pdf"
+                        onChange={(e) => e.target.files?.[0] && handlePDFUpload(e.target.files[0], 'exit')}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      />
+                      <div className={cn(
+                        "p-6 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-2 transition-all",
+                        exitPdf ? "border-emerald-200 bg-emerald-50 text-emerald-600" : "border-gray-200 bg-gray-50 text-gray-400 group-hover:border-indigo-300 group-hover:bg-indigo-50"
+                      )}>
+                        <ClipboardList size={32} />
+                        <span className="text-xs font-bold uppercase tracking-widest">
+                          {exitPdf ? exitPdf.name : 'Selecionar PDF de Saída'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <Button 
+                  className="w-full py-4 text-lg" 
+                  onClick={runPDFComparison} 
+                  disabled={!entryPdf || !exitPdf || isComparingPDFs}
+                  icon={isComparingPDFs ? Loader2 : Sparkles}
+                >
+                  {isComparingPDFs ? 'Analisando Divergências...' : 'Gerar Laudo de Comparação com IA'}
+                </Button>
+
+                {pdfReport && (
+                  <div className="pt-8 border-t border-gray-100 space-y-4">
+                    <div className="flex items-center gap-2 text-indigo-600">
+                      <CheckCircle2 size={20} />
+                      <h3 className="font-bold">Laudo de Divergências Gerado</h3>
+                    </div>
+                    <div className="bg-gray-50 p-6 rounded-2xl prose prose-sm max-w-none text-gray-700">
+                      <ReactMarkdown>{pdfReport}</ReactMarkdown>
+                    </div>
+                    <Button variant="secondary" onClick={() => { setPdfReport(null); setEntryPdf(null); setExitPdf(null); }} icon={X}>Limpar</Button>
+                  </div>
+                )}
+              </Card>
+            </motion.div>
+          )}
+
           {view === 'inspection-view' && selectedInspection && (
             <motion.div key="inspection-view" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-8">
               <div className="flex items-center justify-between">
@@ -645,12 +798,28 @@ export default function App() {
                         </div>
                         
                         <div className="flex flex-wrap gap-3">
-                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
-                            <Camera size={16} /> Adicionar Foto
-                          </button>
-                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
-                            <VideoIcon size={16} /> Adicionar Vídeo
-                          </button>
+                          <div className="relative">
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              onChange={(e) => e.target.files?.[0] && handleMediaUpload(room.id, 'photo', e.target.files[0])}
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                            />
+                            <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                              <Camera size={16} /> Adicionar Foto
+                            </button>
+                          </div>
+                          <div className="relative">
+                            <input 
+                              type="file" 
+                              accept="video/*" 
+                              onChange={(e) => e.target.files?.[0] && handleMediaUpload(room.id, 'video', e.target.files[0])}
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                            />
+                            <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                              <VideoIcon size={16} /> Adicionar Vídeo
+                            </button>
+                          </div>
                           <button 
                             onClick={async () => {
                               const mockAudioBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
@@ -676,14 +845,52 @@ export default function App() {
                           </button>
                         </div>
 
-                        {/* Media Preview Placeholder */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-50">
-                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
-                            <ImageIcon size={24} />
-                          </div>
-                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
-                            <VideoIcon size={24} />
-                          </div>
+                        {/* Media Preview */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-50">
+                          {room.media?.map(m => (
+                            <div key={m.id} className="space-y-2">
+                              <div className="relative aspect-video bg-gray-100 rounded-2xl overflow-hidden group">
+                                {m.type === 'photo' ? (
+                                  <img src={m.url} alt="Vistoria" className="w-full h-full object-cover" />
+                                ) : (
+                                  <video src={m.url} className="w-full h-full object-cover" controls />
+                                )}
+                                <button 
+                                  onClick={() => {
+                                    const updatedMedia = room.media.filter(item => item.id !== m.id);
+                                    updateRoomMedia(room.id, updatedMedia);
+                                  }}
+                                  className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                              <div className="space-y-2">
+                                <Button 
+                                  variant="secondary" 
+                                  className="w-full text-[10px] py-1.5 h-auto font-bold uppercase tracking-widest"
+                                  onClick={() => analyzeMedia(room.id, m.id)}
+                                  disabled={isAnalyzingMedia === m.id}
+                                  icon={isAnalyzingMedia === m.id ? Loader2 : Sparkles}
+                                >
+                                  {isAnalyzingMedia === m.id ? 'Analisando...' : 'IA: Analisar Mídia'}
+                                </Button>
+                                {m.aiAnalysis && (
+                                  <div className="p-3 bg-indigo-50 rounded-xl text-[11px] text-indigo-800 leading-relaxed italic">
+                                    <ReactMarkdown>{m.aiAnalysis}</ReactMarkdown>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          {(!room.media || room.media.length === 0) && (
+                            <div className="col-span-full py-8 text-center space-y-2">
+                              <div className="w-12 h-12 bg-gray-50 text-gray-300 rounded-full flex items-center justify-center mx-auto">
+                                <ImageIcon size={24} />
+                              </div>
+                              <p className="text-xs text-gray-400">Nenhuma foto ou vídeo adicionado</p>
+                            </div>
+                          )}
                         </div>
                       </Card>
                     </div>
