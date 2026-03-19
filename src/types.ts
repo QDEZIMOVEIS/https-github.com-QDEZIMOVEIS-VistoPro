@@ -37,6 +37,7 @@ export interface Inspection {
 
 export interface Media {
   id: string;
+  roomId: string;
   type: 'photo' | 'video';
   url: string;
   base64?: string; // For AI analysis if not using Storage yet

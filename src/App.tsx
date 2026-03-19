@@ -126,6 +126,7 @@ export default function App() {
   const [inspections, setInspections] = useState<Inspection[]>([]);
   const [selectedInspection, setSelectedInspection] = useState<Inspection | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [media, setMedia] = useState<Media[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [comparisonList, setComparisonList] = useState<Property[]>([]);
@@ -233,6 +234,25 @@ export default function App() {
     return unsubRooms;
   }, [selectedInspection]);
 
+  // Media Data Effect
+  useEffect(() => {
+    if (rooms.length === 0) {
+      setMedia([]);
+      return;
+    }
+    const roomIds = rooms.map(r => r.id).filter(id => !!id);
+    if (roomIds.length === 0) {
+      setMedia([]);
+      return;
+    }
+
+    const mediaQ = query(collection(db, 'media'), where('roomId', 'in', roomIds));
+    const unsubMedia = onSnapshot(mediaQ, (snapshot) => {
+      setMedia(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Media)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'media'));
+    return unsubMedia;
+  }, [rooms]);
+
   useEffect(() => {
     if (rooms.length === 0) return;
     const roomIds = rooms.map(r => r.id).filter(id => !!id);
@@ -255,48 +275,59 @@ export default function App() {
     const fileArray = Array.from(files);
     
     const uploadPromises = fileArray.map(file => {
-      return new Promise<Media>((resolve) => {
+      return new Promise<void>((resolve) => {
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
           const base64 = (e.target?.result as string).split(',')[1];
           const url = e.target?.result as string;
-          resolve({
-            id: Math.random().toString(36).substr(2, 9),
-            type,
-            url,
-            base64,
-            createdAt: new Date()
-          });
+          
+          try {
+            await addDoc(collection(db, 'media'), {
+              roomId,
+              type,
+              url,
+              createdAt: serverTimestamp()
+            });
+          } catch (err) {
+            handleFirestoreError(err, OperationType.CREATE, 'media');
+          }
+          resolve();
         };
         reader.readAsDataURL(file);
       });
     });
 
-    const newMediaItems = await Promise.all(uploadPromises);
+    await Promise.all(uploadPromises);
+  };
 
-    const room = rooms.find(r => r.id === roomId);
-    if (room) {
-      const updatedMedia = [...(room.media || []), ...newMediaItems];
-      updateRoomMedia(roomId, updatedMedia);
+  const deleteMedia = async (mediaId: string) => {
+    try {
+      await deleteDoc(doc(db, 'media', mediaId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, 'media');
     }
   };
 
-  const updateRoomMedia = async (roomId: string, media: Media[]) => {
-    try {
-      await updateDoc(doc(db, 'rooms', roomId), { media });
-    } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'rooms'); }
-  };
-
   const analyzeRoom = async (roomId: string) => {
-    const room = rooms.find(r => r.id === roomId);
-    if (!room || !room.media || room.media.length === 0) return;
+    const roomMedia = media.filter(m => m.roomId === roomId);
+    if (roomMedia.length === 0) return;
 
     setIsAnalyzingRoom(roomId);
     try {
-      const mediaItems = room.media.filter(m => !!m.base64).map(m => ({
-        base64: m.base64!,
-        type: m.type
-      }));
+      const mediaItems = roomMedia.filter(m => !!m.base64 || !!m.url).map(m => {
+        // Extract base64 from url if base64 is missing
+        let b64 = m.base64;
+        if (!b64 && m.url.startsWith('data:')) {
+          b64 = m.url.split(',')[1];
+        }
+        return {
+          base64: b64 || '',
+          type: m.type
+        };
+      }).filter(m => !!m.base64);
+
+      if (mediaItems.length === 0) return;
+
       const analysis = await aiService.analyzeRoomMedia(mediaItems);
       await updateDoc(doc(db, 'rooms', roomId), { aiAnalysis: analysis });
     } catch (err) {
@@ -306,17 +337,21 @@ export default function App() {
     }
   };
 
-  const analyzeMedia = async (roomId: string, mediaId: string) => {
-    const room = rooms.find(r => r.id === roomId);
-    const media = room?.media?.find(m => m.id === mediaId);
-    if (!media || !media.base64) return;
+  const analyzeMedia = async (mediaId: string) => {
+    const m = media.find(item => item.id === mediaId);
+    if (!m) return;
+
+    let b64 = m.base64;
+    if (!b64 && m.url.startsWith('data:')) {
+      b64 = m.url.split(',')[1];
+    }
+    if (!b64) return;
 
     setIsAnalyzingMedia(mediaId);
     try {
-      const mimeType = media.type === 'photo' ? 'image/jpeg' : 'video/mp4';
-      const analysis = await aiService.analyzeInspectionMedia(media.base64, mimeType);
-      const updatedMedia = room.media.map(m => m.id === mediaId ? { ...m, aiAnalysis: analysis } : m);
-      await updateRoomMedia(roomId, updatedMedia);
+      const mimeType = m.type === 'photo' ? 'image/jpeg' : 'video/mp4';
+      const analysis = await aiService.analyzeInspectionMedia(b64, mimeType);
+      await updateDoc(doc(db, 'media', mediaId), { aiAnalysis: analysis });
     } catch (err) {
       console.error(err);
     } finally {
@@ -855,7 +890,7 @@ export default function App() {
                             variant="secondary" 
                             className="text-xs font-bold text-indigo-600 bg-indigo-50 border-none"
                             onClick={() => analyzeRoom(room.id)}
-                            disabled={isAnalyzingRoom === room.id || !room.media || room.media.length === 0}
+                            disabled={isAnalyzingRoom === room.id || media.filter(m => m.roomId === room.id).length === 0}
                             icon={isAnalyzingRoom === room.id ? Loader2 : Sparkles}
                           >
                             {isAnalyzingRoom === room.id ? 'Analisando Cômodo...' : 'IA: Analisar Cômodo Completo'}
@@ -917,7 +952,7 @@ export default function App() {
 
                         {/* Media Preview */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-50">
-                          {room.media?.map(m => (
+                          {media.filter(m => m.roomId === room.id).map(m => (
                             <div key={m.id} className="space-y-2">
                               <div className="relative aspect-video bg-gray-100 rounded-2xl overflow-hidden group">
                                 {m.type === 'photo' ? (
@@ -926,10 +961,7 @@ export default function App() {
                                   <video src={m.url} className="w-full h-full object-cover" controls />
                                 )}
                                 <button 
-                                  onClick={() => {
-                                    const updatedMedia = room.media.filter(item => item.id !== m.id);
-                                    updateRoomMedia(room.id, updatedMedia);
-                                  }}
+                                  onClick={() => deleteMedia(m.id)}
                                   className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all"
                                 >
                                   <X size={14} />
@@ -939,7 +971,7 @@ export default function App() {
                                 <Button 
                                   variant="secondary" 
                                   className="w-full text-[10px] py-1.5 h-auto font-bold uppercase tracking-widest"
-                                  onClick={() => analyzeMedia(room.id, m.id)}
+                                  onClick={() => analyzeMedia(m.id)}
                                   disabled={isAnalyzingMedia === m.id}
                                   icon={isAnalyzingMedia === m.id ? Loader2 : Sparkles}
                                 >

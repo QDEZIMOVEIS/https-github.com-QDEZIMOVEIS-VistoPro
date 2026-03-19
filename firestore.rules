@@ -166,6 +166,13 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && (get(/databases/$(database)/documents/inspections/$(resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
     }
 
+    match /media/{mediaId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
     match /items/{itemId} {
       allow read: if isAuthenticated(); // Scoped by roomId in queries, but could be tightened
       allow create: if isAuthenticated() && isValidItem(request.resource.data);
