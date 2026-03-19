@@ -37,8 +37,20 @@ export interface Inspection {
 
 export interface Media {
   id: string;
+  roomId: string;
   type: 'photo' | 'video';
   url: string;
+  base64?: string; // For AI analysis if not using Storage yet
+  aiAnalysis?: string;
+  createdAt: any;
+}
+
+export interface ComparisonReport {
+  id: string;
+  propertyId: string;
+  entryPdfName: string;
+  exitPdfName: string;
+  report: string;
   createdAt: any;
 }
 
@@ -49,6 +61,7 @@ export interface Room {
   order: number;
   notes: string;
   media: Media[];
+  aiAnalysis?: string;
 }
 
 export interface Item {

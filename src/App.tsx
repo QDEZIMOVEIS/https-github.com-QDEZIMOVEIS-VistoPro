@@ -5,11 +5,12 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, 
+  auth, db, storage, googleProvider, signInWithPopup, signOut, onAuthStateChanged, 
   collection, doc, setDoc, getDoc, query, where, onSnapshot, 
-  addDoc, updateDoc, deleteDoc, serverTimestamp, FirebaseUser 
+  addDoc, updateDoc, deleteDoc, serverTimestamp, FirebaseUser,
+  ref, uploadBytes, getDownloadURL, deleteObject
 } from './firebase';
-import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite } from './types';
+import { Property, Inspection, Room, Item, UserProfile, OperationType, Favorite, Media } from './types';
 import { handleFirestoreError } from './errorUtils';
 import { 
   Plus, LogOut, Home, ClipboardList, ChevronRight, CheckCircle2, 
@@ -316,6 +317,57 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'rooms', roomId), { notes });
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'rooms'); }
+  };
+
+  const handleFileUpload = async (roomId: string, file: File, type: 'photo' | 'video') => {
+    if (!user || !selectedInspection) return;
+    try {
+      const fileId = Math.random().toString(36).substring(7);
+      const storageRef = ref(storage, `inspections/${selectedInspection.id}/rooms/${roomId}/${fileId}_${file.name}`);
+      
+      const snapshot = await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(snapshot.ref);
+      
+      const room = rooms.find(r => r.id === roomId);
+      if (!room) return;
+      
+      const newMedia: Media = {
+        id: fileId,
+        type,
+        url,
+        createdAt: new Date()
+      };
+      
+      const updatedMedia = [...(room.media || []), newMedia];
+      await updateDoc(doc(db, 'rooms', roomId), { media: updatedMedia });
+    } catch (err) {
+      console.error('Error uploading file:', err);
+      alert('Erro ao fazer upload do arquivo.');
+    }
+  };
+
+  const deleteMedia = async (roomId: string, mediaId: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este arquivo?')) return;
+    try {
+      const room = rooms.find(r => r.id === roomId);
+      if (!room) return;
+      
+      const mediaToDelete = room.media.find(m => m.id === mediaId);
+      if (mediaToDelete) {
+        // Try to delete from storage if it's a storage URL
+        try {
+          const storageRef = ref(storage, mediaToDelete.url);
+          await deleteObject(storageRef);
+        } catch (e) {
+          console.warn('Could not delete from storage, might be a mock URL:', e);
+        }
+      }
+      
+      const updatedMedia = room.media.filter(m => m.id !== mediaId);
+      await updateDoc(doc(db, 'rooms', roomId), { media: updatedMedia });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'rooms');
+    }
   };
 
   const toggleFavorite = async (propertyId: string) => {
@@ -643,12 +695,30 @@ export default function App() {
                         </div>
                         
                         <div className="flex flex-wrap gap-3">
-                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                          <label className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors cursor-pointer">
                             <Camera size={16} /> Adicionar Foto
-                          </button>
-                          <button className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors">
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleFileUpload(room.id, file, 'photo');
+                              }} 
+                            />
+                          </label>
+                          <label className="flex items-center gap-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2.5 rounded-xl hover:bg-indigo-100 transition-colors cursor-pointer">
                             <VideoIcon size={16} /> Adicionar Vídeo
-                          </button>
+                            <input 
+                              type="file" 
+                              accept="video/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleFileUpload(room.id, file, 'video');
+                              }} 
+                            />
+                          </label>
                           <button 
                             onClick={async () => {
                               const mockAudioBase64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
@@ -674,15 +744,36 @@ export default function App() {
                           </button>
                         </div>
 
-                        {/* Media Preview Placeholder */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-50">
-                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
-                            <ImageIcon size={24} />
+                        {/* Media Preview */}
+                        {room.media && room.media.length > 0 && (
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-50">
+                            {room.media.map((m) => (
+                              <div key={m.id} className="relative aspect-square bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 group/media">
+                                {m.type === 'photo' ? (
+                                  <img 
+                                    src={m.url} 
+                                    alt="Vistoria" 
+                                    className="w-full h-full object-cover" 
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center bg-gray-900">
+                                    <video src={m.url} className="w-full h-full object-cover" />
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                      <Play className="text-white opacity-50" size={32} />
+                                    </div>
+                                  </div>
+                                )}
+                                <button 
+                                  onClick={() => deleteMedia(room.id, m.id)}
+                                  className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-lg opacity-0 group-hover/media:opacity-100 transition-all hover:bg-red-600"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                          <div className="aspect-square bg-gray-50 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center text-gray-300">
-                            <VideoIcon size={24} />
-                          </div>
-                        </div>
+                        )}
                       </Card>
                     </div>
                   ))}

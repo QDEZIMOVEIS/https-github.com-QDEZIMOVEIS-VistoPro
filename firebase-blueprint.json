@@ -64,7 +64,20 @@
         "id": { "type": "string" },
         "inspectionId": { "type": "string" },
         "name": { "type": "string" },
-        "order": { "type": "number" }
+        "order": { "type": "number" },
+        "notes": { "type": "string" },
+        "media": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "type": { "type": "string", "enum": ["photo", "video"] },
+              "url": { "type": "string" },
+              "createdAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
       },
       "required": ["inspectionId", "name"]
     },
