@@ -1,5 +1,5 @@
 {
-  "name": "VistoPro - Real Estate Inspection",
-  "description": "A professional real estate inspection tool for property managers and inspectors.",
-  "requestFramePermissions": ["camera"]
+  "name": "",
+  "description": "",
+  "requestFramePermissions": []
 }
