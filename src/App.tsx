@@ -15,7 +15,7 @@ import {
   Plus, LogOut, Home, ClipboardList, ChevronRight, CheckCircle2, 
   Camera, Save, ArrowLeft, User, Settings, Heart, Scale, X, Info,
   MessageSquare, Sparkles, Mic, Play, Loader2, Image as ImageIcon,
-  Video as VideoIcon, Wand2
+  Video as VideoIcon, Wand2, Printer
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -118,7 +118,7 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'dashboard' | 'property-form' | 'inspection-view' | 'comparison' | 'comparison-pdf'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'property-form' | 'inspection-view' | 'inspection-report' | 'comparison' | 'comparison-pdf'>('dashboard');
   
   // Data State
   const [properties, setProperties] = useState<Property[]>([]);
@@ -490,7 +490,7 @@ export default function App() {
     if (!selectedInspection) return;
     try {
       await updateDoc(doc(db, 'inspections', selectedInspection.id), { status: 'Completed' });
-      setView('dashboard');
+      setView('inspection-report');
     } catch (err) { handleFirestoreError(err, OperationType.UPDATE, 'inspections'); }
   };
 
@@ -645,7 +645,18 @@ export default function App() {
                   </div>
                   <div className="space-y-3">
                     {inspections.map(ins => (
-                      <Card key={ins.id} onClick={() => { setSelectedInspection(ins); setView('inspection-view'); }} className="p-4 flex items-center justify-between hover:bg-gray-50 group">
+                      <Card 
+                        key={ins.id} 
+                        onClick={() => { 
+                          setSelectedInspection(ins); 
+                          if (ins.status === 'Completed') {
+                            setView('inspection-report');
+                          } else {
+                            setView('inspection-view'); 
+                          }
+                        }} 
+                        className="p-4 flex items-center justify-between hover:bg-gray-50 group"
+                      >
                         <div className="flex items-center gap-4">
                           <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center", ins.type === 'Entry' ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600")}><ClipboardList size={20} /></div>
                           <div>
@@ -804,6 +815,100 @@ export default function App() {
                   </div>
                 )}
               </Card>
+            </motion.div>
+          )}
+
+          {view === 'inspection-report' && selectedInspection && (
+            <motion.div key="inspection-report" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-8 print:space-y-4">
+              <div className="flex items-center justify-between print:hidden">
+                <div className="flex items-center gap-4">
+                  <Button variant="ghost" onClick={() => setView('dashboard')} icon={ArrowLeft}>Voltar</Button>
+                  <div>
+                    <h2 className="text-2xl font-bold">Laudo de Vistoria</h2>
+                    <p className="text-sm text-gray-500">{selectedProperty?.address}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => window.print()} icon={Printer}>Imprimir PDF</Button>
+                  <Button onClick={() => setView('dashboard')}>Sair</Button>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 space-y-8 print:shadow-none print:border-none print:p-0">
+                <div className="text-center space-y-2 border-b border-gray-100 pb-8">
+                  <h1 className="text-3xl font-bold text-gray-900 uppercase tracking-tight">Laudo de Vistoria de {selectedInspection.type === 'Entry' ? 'Entrada' : 'Saída'}</h1>
+                  <p className="text-gray-500">Imóvel: {selectedProperty?.address}</p>
+                  <p className="text-gray-400 text-sm">Data: {new Date(selectedInspection.date?.toDate?.() || Date.now()).toLocaleDateString()}</p>
+                </div>
+
+                <div className="space-y-12">
+                  {rooms.map(room => (
+                    <div key={room.id} className="space-y-6 break-inside-avoid">
+                      <div className="flex items-center gap-3 border-b border-gray-50 pb-2">
+                        <div className="w-2 h-6 bg-indigo-600 rounded-full"></div>
+                        <h3 className="text-xl font-bold text-gray-800">{room.name}</h3>
+                      </div>
+                      
+                      {room.notes && (
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Observações</h4>
+                          <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">{room.notes}</p>
+                        </div>
+                      )}
+
+                      {room.aiAnalysis && (
+                        <div className="p-6 bg-indigo-50 rounded-2xl border border-indigo-100 space-y-2">
+                          <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1">
+                            <Sparkles size={12} /> Análise IA
+                          </h4>
+                          <div className="prose prose-sm max-w-none text-indigo-900 leading-relaxed">
+                            <ReactMarkdown>{room.aiAnalysis}</ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {media.filter(m => m.roomId === room.id).map(m => (
+                          <div key={m.id} className="space-y-2 break-inside-avoid">
+                            <div className="aspect-video bg-gray-50 rounded-xl overflow-hidden border border-gray-100">
+                              {m.type === 'photo' ? (
+                                <img src={m.url} alt="Mídia" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
+                                  <VideoIcon size={24} />
+                                  <span className="text-[10px] ml-2 font-bold uppercase">Vídeo</span>
+                                </div>
+                              )}
+                            </div>
+                            {m.aiAnalysis && (
+                              <div className="p-2 bg-gray-50 rounded-lg text-[10px] text-gray-500 italic leading-tight">
+                                <ReactMarkdown>{m.aiAnalysis}</ReactMarkdown>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-12 border-t border-gray-100 grid grid-cols-2 gap-12 text-center">
+                  <div className="space-y-8">
+                    <div className="h-px bg-gray-200 w-full"></div>
+                    <div>
+                      <p className="font-bold text-gray-900">{userProfile?.displayName}</p>
+                      <p className="text-xs text-gray-400 uppercase tracking-widest">Vistoriador</p>
+                    </div>
+                  </div>
+                  <div className="space-y-8">
+                    <div className="h-px bg-gray-200 w-full"></div>
+                    <div>
+                      <p className="font-bold text-gray-900">{selectedProperty?.tenantName || 'Inquilino'}</p>
+                      <p className="text-xs text-gray-400 uppercase tracking-widest">Inquilino / Responsável</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </motion.div>
           )}
 
