@@ -135,9 +135,9 @@ service cloud.firestore {
     }
 
     match /favorites/{favoriteId} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidFavorite(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     match /properties/{propertyId} {
@@ -155,14 +155,14 @@ service cloud.firestore {
     }
 
     match /rooms/{roomId} {
-      allow read: if isAuthenticated(); // Scoped by inspectionId in queries
-      allow create: if isAuthenticated() && isValidRoom(request.resource.data);
-      allow update: if isAuthenticated() && isValidRoom(request.resource.data);
-      allow delete: if isAuthenticated();
+      allow read: if isAuthenticated() && (get(/databases/$(database)/documents/inspections/$(resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidRoom(request.resource.data) && (get(/databases/$(database)/documents/inspections/$(request.resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && isValidRoom(request.resource.data) && (get(/databases/$(database)/documents/inspections/$(resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (get(/databases/$(database)/documents/inspections/$(resource.data.inspectionId)).data.inspectorId == request.auth.uid || isAdmin());
     }
 
     match /items/{itemId} {
-      allow read: if isAuthenticated(); // Scoped by roomId in queries
+      allow read: if isAuthenticated(); // Scoped by roomId in queries, but could be tightened
       allow create: if isAuthenticated() && isValidItem(request.resource.data);
       allow update: if isAuthenticated() && isValidItem(request.resource.data);
       allow delete: if isAuthenticated();
